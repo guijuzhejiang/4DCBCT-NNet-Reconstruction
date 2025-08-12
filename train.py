@@ -118,7 +118,8 @@ class NnetTrainer:
 
         # 生成切片样本
         total = len(dataset)
-        train_frac, val_frac, test_frac = 0.01, 0.001, 0.1
+        # train_frac, val_frac, test_frac = 0.9, 0.1, 0.1
+        train_frac, val_frac = 0.9, 0.1
 
         # 随机打乱索引并划分
         indices = list(range(total))
@@ -126,16 +127,17 @@ class NnetTrainer:
         random.shuffle(indices)
 
         n_train = int(total * train_frac)
-        n_val = int(total * val_frac)
+        # n_val = int(total * val_frac)
         # 确保全部分配
         train_idx = indices[:n_train]
-        val_idx = indices[n_train:n_train + n_val]
-        test_idx = indices[n_train + n_val:]
+        val_idx = indices[n_train:]
+        # val_idx = indices[n_train:n_train + n_val]
+        # test_idx = indices[n_train + n_val:]
 
         # 把索引转换为 list[dict]（MONAI 的 Dataset 要求 data 是 dict 列表）
         train_dataset = [dataset[i] for i in train_idx]
         val_dataset = [dataset[i] for i in val_idx]
-        test_dataset = [dataset[i] for i in test_idx]
+        # test_dataset = [dataset[i] for i in test_idx]
 
         # 分割数据集并应用transforms
         self.train_dataset = CacheDataset(
