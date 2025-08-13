@@ -4,28 +4,23 @@ Refactored version with improved logging, configuration management, and code org
 """
 
 import os
-import shutil
-import numpy as np
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
-from torchsummary import summary
-import torchvision
 import warnings
 
 warnings.filterwarnings("ignore")
 
 # Import custom modules
-from NNet.model_Nnet import Nnet
-from TrainDataset_Nnet import Nnet_Dataset
-from NNet.config import TRAINING_CONFIG, DATASET_CONFIG, DEVICE_CONFIG
-from NNet.utils import get_dataset_slice_counts, setup_device
-from monai.transforms import (Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityd, ToTensord)
+from model_Nnet import Nnet
+from train_dataset_Nnet import Nnet_Dataset
+from config import TRAINING_CONFIG, DATASET_CONFIG, DEVICE_CONFIG
+from utils import get_dataset_slice_counts, setup_device
+from monai.transforms import (Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, ToTensord)
 from monai.data import CacheDataset, ThreadDataLoader
-from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric
+from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric, MultiScaleSSIMMetric
 import matplotlib.pyplot as plt
 from pathlib import Path
+from img_reader import CustomIMGReader
+from metrics import Corr2Metric
 
 
 class NnetTrainer:
@@ -40,9 +35,11 @@ class NnetTrainer:
         os.makedirs(self.result_dir, exist_ok=True)
         # 初始化指标计算器
         self.ssim_metric = SSIMMetric(spatial_dims=2, reduction="mean")
+        self.msssim_metric = MultiScaleSSIMMetric(spatial_dims=2, data_range=1.0, reduction="mean") #因为图像归一化到 [0,1]
         self.mae_metric = MAEMetric(reduction="mean")
         self.psnr_metric = PSNRMetric(max_val=1.0, reduction="mean")
         self.rmse_metric = RMSEMetric(reduction="mean")
+        self.corr2_metric = Corr2Metric(reduction="mean")
         self.setup_data()
         self.setup_model()
 
@@ -51,7 +48,14 @@ class NnetTrainer:
         val_transforms = Compose([
             LoadImaged(keys=["img", "prior", "label"]),
             EnsureChannelFirstd(keys=["img", "prior", "label"]),
-            ScaleIntensityd(keys=["img", "prior", "label"]),
+            ScaleIntensityRanged(
+                keys=["img", "prior", "label"],
+                a_min=-1000,
+                a_max=400,
+                b_min=0.0,
+                b_max=1.0,
+                clip=True,
+            ),
             # 转换为Tensor
             ToTensord(keys=["img", "prior", "label"])
         ])
@@ -59,26 +63,16 @@ class NnetTrainer:
         """Setup data loaders."""
         print("Setting up datasets...")
 
-        # Automatically count slice numbers
-        slice_counts_val = get_dataset_slice_counts(
-            DATASET_CONFIG['data_root'],
-            DATASET_CONFIG['val_dataset_indices'],
-        )
-        print(f"Corresponding slice counts: {slice_counts_val}")
-        val_dataset = Nnet_Dataset(
-            DATASET_CONFIG['data_root'],
-            DATASET_CONFIG['data_root'],
-            DATASET_CONFIG['data_root'],
-            DATASET_CONFIG['val_dataset_indices'],
-            slice_counts_val,
-        )
-        print(f'Total validation data samples: {len(val_dataset.samples)}')
+        val_indices = DATASET_CONFIG['val_dataset_indices']
+        print("val_indices:", val_indices)
+        val_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], val_indices)
+        print(f'Total validation data samples: {len(val_dataset)}')
 
         self.val_dataset = CacheDataset(
-            data=val_dataset.samples,
+            data=val_dataset,
             transform=val_transforms,
             cache_rate=1.0,
-            num_workers=2,
+            num_workers=8,
             progress=True
         )
 
@@ -101,9 +95,11 @@ class NnetTrainer:
     def calculate_metrics(self, pred, target):
         # 重置指标
         self.ssim_metric.reset()
+        self.msssim_metric.reset()
         self.mae_metric.reset()
         self.psnr_metric.reset()
         self.rmse_metric.reset()
+        self.corr2_metric.reset()
 
         pred = pred.float()
         target = target.float()
@@ -111,6 +107,9 @@ class NnetTrainer:
         # 批量计算指标
         self.ssim_metric(pred, target)
         ssim_val = self.ssim_metric.aggregate().item()
+
+        self.msssim_metric(pred, target)
+        msssim_val = self.msssim_metric.aggregate().item()
 
         self.mae_metric(pred, target)
         mae_val = self.mae_metric.aggregate().item()
@@ -121,16 +120,21 @@ class NnetTrainer:
         self.rmse_metric(pred, target)
         rmse_val = self.rmse_metric.aggregate().item()
 
+        self.corr2_metric(pred, target)
+        corr2_val = self.corr2_metric.aggregate().item()
+
         return {
             "rmse": rmse_val,
             "mae": mae_val,
             "psnr": psnr_val,
-            "ssim": ssim_val
+            "ssim": ssim_val,
+            "msssim": msssim_val,
+            "corr2": corr2_val
         }
 
     def validate(self):
         """Validate for one epoch."""
-        running_metrics = {'rmse': 0.0, 'mae': 0.0, 'psnr': 0.0, 'ssim': 0.0}
+        running_metrics = {'rmse': 0.0, 'mae': 0.0, 'psnr': 0.0, 'ssim': 0.0, 'msssim': 0.0, 'corr2': 0.0}
         with torch.no_grad():
             for batch in self.val_loader:
                 images = batch["img"].to(self.device)
@@ -166,7 +170,9 @@ class NnetTrainer:
             f'Val_RMSE: {avg_metrics["rmse"]:.6f}, '
             f'Val_MAE: {avg_metrics["mae"]:.6f}, '
             f'Val_PSNR: {avg_metrics["psnr"]:.6f}, '
-            f'Val_SSIM: {avg_metrics["ssim"]:.6f}'
+            f'Val_SSIM: {avg_metrics["ssim"]:.6f}, '
+            f"Val_MSSSIM: {avg_metrics['msssim']:.6f}, "
+            f"Val_CORR2: {avg_metrics['corr2']:.6f}"
         )
 
         # 打印结果到控制台
@@ -181,6 +187,8 @@ class NnetTrainer:
             f.write(f"MAE: {avg_metrics['mae']:.6f}\n")
             f.write(f"PSNR: {avg_metrics['psnr']:.6f}\n")
             f.write(f"SSIM: {avg_metrics['ssim']:.6f}\n")
+            f.write(f"MSSSIM: {avg_metrics['msssim']:.6f}\n")
+            f.write(f"CORR2: {avg_metrics['corr2']:.6f}\n")
 
         print(f"Saved metrics to: {metrics_path}")
 

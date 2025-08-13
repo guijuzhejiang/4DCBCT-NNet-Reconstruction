@@ -18,7 +18,7 @@ warnings.filterwarnings("ignore")
 
 # Import custom modules
 from model_Nnet import Nnet
-from TrainDataset_Nnet import Nnet_Dataset
+from train_dataset_Nnet import Nnet_Dataset
 from config import TRAINING_CONFIG, DATASET_CONFIG, MODEL_CONFIG, LOGGING_CONFIG, SCHEDULER_CONFIG, DEVICE_CONFIG
 from utils import setup_device, save_model
 from monai.losses import SSIMLoss, PerceptualLoss, MultiScaleLoss

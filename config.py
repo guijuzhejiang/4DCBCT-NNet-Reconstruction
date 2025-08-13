@@ -23,6 +23,8 @@ DATASET_CONFIG = {
     # 'train_dataset_indices': [0],
     'val_dataset_indices': list(range(40, 45)),
     # 'val_dataset_indices': [40],
+    # 'test_dataset_indices': list(range(45, 50)),
+    'test_dataset_indices': [40],
     'image_size': (512, 512),
     'image_number': 384,
 }

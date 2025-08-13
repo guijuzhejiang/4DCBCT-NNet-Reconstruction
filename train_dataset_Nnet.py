@@ -5,25 +5,6 @@ from monai.transforms import Transform
 from monai.config import KeysCollection
 import glob
 
-class LoadRawImgSlice(Transform):
-    """加载单个.img切片文件并重塑为2D图像，保留原始HU值"""
-
-    def __init__(self, keys: KeysCollection, shape=(1, 512, 512), dtype=np.int16):
-        self.keys = keys
-        self.shape = shape
-        self.dtype = dtype
-
-    def __call__(self, data):
-        d = dict(data)
-        for key in self.keys:
-            path = d[key]
-            if path.endswith('.img'):
-                with open(path, 'rb') as f:
-                    raw_data = np.fromfile(f, dtype=self.dtype)
-                # 重塑为2D图像并保留原始CT值
-                d[key] = raw_data.reshape(self.shape)
-        return d
-
 
 class Nnet_Dataset(data.Dataset):
     """
