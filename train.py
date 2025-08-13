@@ -12,14 +12,13 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from torchsummary import summary
 import torchvision
-import random
 import warnings
 
 warnings.filterwarnings("ignore")
 
 # Import custom modules
 from model_Nnet import Nnet
-from TrainDataset_Nnet import Nnet_Dataset, LoadRawImgSlice
+from TrainDataset_Nnet import Nnet_Dataset
 from config import TRAINING_CONFIG, DATASET_CONFIG, MODEL_CONFIG, LOGGING_CONFIG, SCHEDULER_CONFIG, DEVICE_CONFIG
 from utils import setup_device, save_model
 from monai.losses import SSIMLoss, PerceptualLoss, MultiScaleLoss
@@ -269,6 +268,7 @@ class NnetTrainer:
             ssim = self.ssim_loss(pred, target)
             percep = self.perceptual_loss(pred, target)
             loss_total = weight_mse * mse + weight_l1 * l1 + weight_percep * percep + weight_ssim * ssim
+            # loss_total = mse
             return loss_total
 
         self.criterion = combined_loss
@@ -320,14 +320,14 @@ class NnetTrainer:
 
         for i, batch in enumerate(self.train_loader):
             # batch是字典形式
-            images = batch["img"].to(self.device)
-            prior = batch["prior"].to(self.device)
-            labels = batch["label"].to(self.device)
+            images = batch["img"].to(self.device)       #(batch,1,512,512)
+            prior = batch["prior"].to(self.device)      #(batch,1,512,512)
+            labels = batch["label"].to(self.device)     #(batch,1,512,512)
 
             self.optimizer.zero_grad()
 
             try:
-                prediction = self.model(images, prior)
+                prediction = self.model(images, prior)       #(batch,1,512,512)
                 loss = self.criterion(prediction, labels)
                 # 反向传播
                 loss.backward()
@@ -342,9 +342,17 @@ class NnetTrainer:
                 # Calculate metrics
                 batch_metrics = self.calculate_metrics(prediction, labels)
 
-                print(f'[Epoch {epoch + 1} Batch {i + 1}] LR: {self.optimizer.param_groups[0]["lr"]}, '
-                      f'Loss: {batch_loss:.6f}, RMSE: {batch_metrics["rmse"]:.6f}, MAE: {batch_metrics["mae"]:.6f}, '
-                      f'PSNR: {batch_metrics["psnr"]:.6f}, SSIM: {batch_metrics["ssim"]:.6f}, MSSSIM: {batch_metrics["msssim"]:.6f}, CORR2: {batch_metrics["corr2"]:.6f}')
+                print(
+                    f"[Epoch {epoch + 1} Batch {i + 1}] "
+                    f"LR: {self.optimizer.param_groups[0]['lr']}, "
+                    f"Loss: {batch_loss:.6f}, "
+                    f"RMSE: {batch_metrics['rmse']:.6f}, "
+                    f"MAE: {batch_metrics['mae']:.6f}, "
+                    f"PSNR: {batch_metrics['psnr']:.6f}, "
+                    f"SSIM: {batch_metrics['ssim']:.6f}, "
+                    f"MSSSIM: {batch_metrics['msssim']:.6f}, "
+                    f"CORR2: {batch_metrics['corr2']:.6f}"
+                )
                 # Log to tensorboard
                 if self.tb_writer:
                     global_step = epoch * len(self.train_loader) + i
@@ -390,11 +398,11 @@ class NnetTrainer:
 
         with torch.no_grad():
             for batch in self.val_loader:
-                images = batch["img"].to(self.device)
-                prior = batch["prior"].to(self.device)
-                labels = batch["label"].to(self.device)
+                images = batch["img"].to(self.device)       #(batch,1,512,512)
+                prior = batch["prior"].to(self.device)      #(batch,1,512,512)
+                labels = batch["label"].to(self.device)     #(batch,1,512,512)
 
-                prediction = self.model(images, prior)
+                prediction = self.model(images, prior)      #(batch,1,512,512)
                 loss = self.criterion(prediction, labels)
 
                 running_loss += loss.item()
@@ -409,9 +417,16 @@ class NnetTrainer:
         avg_metrics = {k: v / num_batches for k, v in running_metrics.items()}
 
         print(
-            f'[Epoch {epoch + 1}] LR: {self.optimizer.param_groups[0]["lr"]}, Val_Loss: {avg_loss:.6f}, Val_RMSE: {avg_metrics["rmse"]:.6f}, '
-            f'Val_MAE: {avg_metrics["mae"]:.6f}, Val_PSNR: {avg_metrics["psnr"]:.6f}, Val_SSIM: {avg_metrics["ssim"]:.6f}, Val_MSSSIM: {avg_metrics["msssim"]:.6f}, Val_CORR2: {avg_metrics["corr2"]:.6f}')
-
+            f"[Epoch {epoch + 1}] "
+            f"LR: {self.optimizer.param_groups[0]['lr']}, "
+            f"Val_Loss: {avg_loss:.6f}, "
+            f"Val_RMSE: {avg_metrics['rmse']:.6f}, "
+            f"Val_MAE: {avg_metrics['mae']:.6f}, "
+            f"Val_PSNR: {avg_metrics['psnr']:.6f}, "
+            f"Val_SSIM: {avg_metrics['ssim']:.6f}, "
+            f"Val_MSSSIM: {avg_metrics['msssim']:.6f}, "
+            f"Val_CORR2: {avg_metrics['corr2']:.6f}"
+        )
         # 检查是否是当前最佳性能
         if avg_loss < self.best_val_loss:
             self.best_val_loss = avg_loss
@@ -434,10 +449,10 @@ class NnetTrainer:
                 if self.tb_writer:
                     # 可视化伪影去除效果
                     # 将数据移动到CPU并转换为浮点型
-                    img_cpu = images[0].cpu().float()
-                    prior_cpu = prior[0].cpu().float()
-                    label_cpu = labels[0].cpu().float()
-                    pred_cpu = prediction[0].cpu().float()
+                    img_cpu = images[0].cpu().float()       #(1,512,512)
+                    prior_cpu = prior[0].cpu().float()      #(1,512,512)
+                    label_cpu = labels[0].cpu().float()     #(1,512,512)
+                    pred_cpu = prediction[0].cpu().float()  #(1,512,512)
 
                     grid = torchvision.utils.make_grid(
                         [img_cpu, prior_cpu, label_cpu, pred_cpu],
@@ -447,9 +462,17 @@ class NnetTrainer:
                     self.tb_writer.add_image(f"Validation/Artifact_Removal", grid, epoch)
 
         # 打印当前最佳结果
-        print(f'[Best Validation] Epoch: {self.best_epoch}, Loss: {self.best_val_loss:.6f}, '
-              f'RMSE: {self.best_val_metrics["rmse"]:.6f}, MAE: {self.best_val_metrics["mae"]:.6f}, '
-              f'PSNR: {self.best_val_metrics["psnr"]:.6f}, SSIM: {self.best_val_metrics["ssim"]:.6f}, MSSSIM: {self.best_val_metrics["msssim"]:.6f}, CORR2: {self.best_val_metrics["corr2"]:.6f}')
+        print(
+            f"[Best Validation] "
+            f"Epoch: {self.best_epoch}, "
+            f"Loss: {self.best_val_loss:.6f}, "
+            f"RMSE: {self.best_val_metrics['rmse']:.6f}, "
+            f"MAE: {self.best_val_metrics['mae']:.6f}, "
+            f"PSNR: {self.best_val_metrics['psnr']:.6f}, "
+            f"SSIM: {self.best_val_metrics['ssim']:.6f}, "
+            f"MSSSIM: {self.best_val_metrics['msssim']:.6f}, "
+            f"CORR2: {self.best_val_metrics['corr2']:.6f}"
+        )
         # Log to tensorboard
         if self.tb_writer:
             self.tb_writer.add_scalar('Val/Loss', avg_loss, epoch)

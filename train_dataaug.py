@@ -7,7 +7,7 @@ import os
 import shutil
 import numpy as np
 import torch
-import torch.nn as nn
+from metrics import Corr2Metric
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from torchsummary import summary
@@ -20,8 +20,8 @@ warnings.filterwarnings("ignore")
 from model_Nnet import Nnet
 from TrainDataset_Nnet import Nnet_Dataset
 from config import TRAINING_CONFIG, DATASET_CONFIG, MODEL_CONFIG, LOGGING_CONFIG, SCHEDULER_CONFIG, DEVICE_CONFIG
-from utils import get_dataset_slice_counts, setup_device, save_model
-from monai.losses import SSIMLoss, PerceptualLoss
+from utils import setup_device, save_model
+from monai.losses import SSIMLoss, PerceptualLoss, MultiScaleLoss
 from torch.nn import MSELoss, L1Loss
 from monai.utils import set_determinism
 from monai.transforms import (
@@ -29,7 +29,7 @@ from monai.transforms import (
     RandGaussianSmoothd, RandCoarseDropoutd, RandAffined, RandAdjustContrastd, ToTensord
 )
 from monai.data import CacheDataset, ThreadDataLoader
-from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric
+from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric, MultiScaleSSIMMetric
 from datetime import datetime
 import wandb
 from img_reader import CustomIMGReader
@@ -43,9 +43,11 @@ class NnetTrainer:
         self.device = setup_device(DEVICE_CONFIG['use_cuda'], DEVICE_CONFIG['cuda_device'])
         # 初始化指标计算器
         self.ssim_metric = SSIMMetric(spatial_dims=2, reduction="mean")
+        self.msssim_metric = MultiScaleSSIMMetric(spatial_dims=2, data_range=1.0, reduction="mean") #因为图像归一化到 [0,1]
         self.mae_metric = MAEMetric(reduction="mean")
         self.psnr_metric = PSNRMetric(max_val=1.0, reduction="mean")
         self.rmse_metric = RMSEMetric(reduction="mean")
+        self.corr2_metric = Corr2Metric(reduction="mean")
         self.setup_logging()
         self.setup_data()
         self.setup_model()
@@ -160,25 +162,31 @@ class NnetTrainer:
 
         """Setup data loaders."""
         print("Setting up datasets...")
-        train_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'])
-        print(f'Total training data samples: {len(train_dataset)}')
 
-        val_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'])
-        print(f'Total validation data samples: {len(val_dataset)}')
+        train_indices = DATASET_CONFIG['train_dataset_indices']
+        val_indices = DATASET_CONFIG['val_dataset_indices']
+
+        print("train_indices:", train_indices)
+        train_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], train_indices)
+
+        print("val_indices:", val_indices)
+        val_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], val_indices)
+
+        print(f"train Dataset sizes:{len(train_dataset)}, validation Dataset sizes:{len(val_dataset)}")
 
         # 分割数据集并应用transforms
         self.train_dataset = CacheDataset(
             data=train_dataset,
             transform=train_transforms,
-            cache_rate=1.0,  # 将所有数据预处理后缓存到内存，训练时直接读取内存，速度最快，但内存占用高。
-            num_workers=4,
+            cache_rate=0.1,  # 将所有数据预处理后缓存到内存，训练时直接读取内存，速度最快，但内存占用高。
+            num_workers=8,
             progress=True
         )
         self.val_dataset = CacheDataset(
             data=val_dataset,
             transform=val_transforms,
-            cache_rate=1.0,
-            num_workers=2,
+            cache_rate=0.2,
+            num_workers=4,
             progress=True
         )
 
@@ -234,7 +242,7 @@ class NnetTrainer:
         weight_ssim = TRAINING_CONFIG['weight_ssim']
         self.optimizer = optim.Adam(
             self.model.parameters(),
-            lr=SCHEDULER_CONFIG['max_lr']
+            lr=SCHEDULER_CONFIG['lr']
         )
 
         # 根据配置选择学习率调度器
@@ -257,20 +265,20 @@ class NnetTrainer:
         #         verbose=True,
         #         min_lr=SCHEDULER_CONFIG['min_lr']
         #     )
-        elif scheduler_type == 'CosineAnnealingWarmRestarts':  # 热重启的余弦退火
+        elif scheduler_type == 'CosineAnnealingWarmRestarts':           #热重启的余弦退火
             self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 self.optimizer,
                 T_0=SCHEDULER_CONFIG['T_0'] * batches_per_epoch,
                 T_mult=SCHEDULER_CONFIG['T_mult'],
                 eta_min=SCHEDULER_CONFIG['min_lr']
             )
-        elif scheduler_type == 'CosineAnnealingLR':  # 余弦退火
+        elif scheduler_type == 'CosineAnnealingLR':         #余弦退火
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
                 T_max=total_batches,
                 eta_min=SCHEDULER_CONFIG['min_lr']
             )
-        elif scheduler_type == 'CyclicLR':  # 循环学习率
+        elif scheduler_type == 'CyclicLR':          # 循环学习率
             self.scheduler = optim.lr_scheduler.CyclicLR(
                 self.optimizer,
                 base_lr=SCHEDULER_CONFIG['min_lr'],  # 基础学习率
@@ -278,7 +286,7 @@ class NnetTrainer:
                 step_size_up=SCHEDULER_CONFIG['epoch_size_up'] * batches_per_epoch,  # 从基础到最大所需的步数
                 mode=SCHEDULER_CONFIG['mode']  # 三角模式
             )
-        elif scheduler_type == 'OneCycleLR':  # 循环学习率
+        elif scheduler_type == 'OneCycleLR':          # 循环学习率
             self.scheduler = optim.lr_scheduler.OneCycleLR(
                 self.optimizer,
                 max_lr=SCHEDULER_CONFIG['max_lr'],
@@ -289,7 +297,7 @@ class NnetTrainer:
         else:
             self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 self.optimizer,
-                T_0=SCHEDULER_CONFIG['T_0'] * batches_per_epoch,  # 初始重启周期
+                T_0=SCHEDULER_CONFIG['T_0'] * batches_per_epoch,        # 初始重启周期
                 T_mult=SCHEDULER_CONFIG['T_mult'],  # 周期倍增因子
                 eta_min=SCHEDULER_CONFIG['min_lr']
             )
@@ -316,9 +324,11 @@ class NnetTrainer:
     def calculate_metrics(self, pred, target):
         # 重置指标
         self.ssim_metric.reset()
+        self.msssim_metric.reset()
         self.mae_metric.reset()
         self.psnr_metric.reset()
         self.rmse_metric.reset()
+        self.corr2_metric.reset()
 
         pred = pred.float()
         target = target.float()
@@ -326,6 +336,9 @@ class NnetTrainer:
         # 批量计算指标
         self.ssim_metric(pred, target)
         ssim_val = self.ssim_metric.aggregate().item()
+
+        self.msssim_metric(pred, target)
+        msssim_val = self.msssim_metric.aggregate().item()
 
         self.mae_metric(pred, target)
         mae_val = self.mae_metric.aggregate().item()
@@ -336,11 +349,16 @@ class NnetTrainer:
         self.rmse_metric(pred, target)
         rmse_val = self.rmse_metric.aggregate().item()
 
+        self.corr2_metric(pred, target)
+        corr2_val = self.corr2_metric.aggregate().item()
+
         return {
             "rmse": rmse_val,
             "mae": mae_val,
             "psnr": psnr_val,
-            "ssim": ssim_val
+            "ssim": ssim_val,
+            "msssim": msssim_val,
+            "corr2": corr2_val
         }
 
     def train_epoch(self, epoch):
@@ -372,9 +390,17 @@ class NnetTrainer:
                 # Calculate metrics
                 batch_metrics = self.calculate_metrics(prediction, labels)
 
-                print(f'[Epoch {epoch + 1} Batch {i + 1}] LR: {self.optimizer.param_groups[0]["lr"]}, '
-                      f'Loss: {batch_loss:.6f}, RMSE: {batch_metrics["rmse"]:.6f}, MAE: {batch_metrics["mae"]:.6f}, '
-                      f'PSNR: {batch_metrics["psnr"]:.6f}, SSIM: {batch_metrics["ssim"]:.6f}')
+                print(
+                    f"[Epoch {epoch + 1} Batch {i + 1}] "
+                    f"LR: {self.optimizer.param_groups[0]['lr']}, "
+                    f"Loss: {batch_loss:.6f}, "
+                    f"RMSE: {batch_metrics['rmse']:.6f}, "
+                    f"MAE: {batch_metrics['mae']:.6f}, "
+                    f"PSNR: {batch_metrics['psnr']:.6f}, "
+                    f"SSIM: {batch_metrics['ssim']:.6f}, "
+                    f"MSSSIM: {batch_metrics['msssim']:.6f}, "
+                    f"CORR2: {batch_metrics['corr2']:.6f}"
+                )
                 # Log to tensorboard
                 if self.tb_writer:
                     global_step = epoch * len(self.train_loader) + i
@@ -383,6 +409,8 @@ class NnetTrainer:
                     self.tb_writer.add_scalar('Train/MAE', batch_metrics['mae'], global_step)
                     self.tb_writer.add_scalar('Train/PSNR', batch_metrics['psnr'], global_step)
                     self.tb_writer.add_scalar('Train/SSIM', batch_metrics['ssim'], global_step)
+                    self.tb_writer.add_scalar('Train/MSSSIM', batch_metrics['msssim'], global_step)
+                    self.tb_writer.add_scalar('Train/CORR2', batch_metrics['corr2'], global_step)
                     self.tb_writer.add_scalar('Learning_Rate', self.optimizer.param_groups[0]['lr'], global_step)
                     self.tb_writer.add_scalar('Epoch', epoch + 1, global_step)
 
@@ -394,10 +422,11 @@ class NnetTrainer:
                         'train_mae': batch_metrics['mae'],
                         'train_psnr': batch_metrics['psnr'],
                         'train_ssim': batch_metrics['ssim'],
+                        'train_msssim': batch_metrics['msssim'],
+                        'train_corr2': batch_metrics['corr2'],
                         'learning_rate': self.optimizer.param_groups[0]['lr'],
                         'epoch': epoch + 1
                     })
-
             except RuntimeError as exception:
                 if "out of memory" in str(exception):
                     print("WARNING: out of memory")
@@ -412,7 +441,7 @@ class NnetTrainer:
         """Validate for one epoch."""
         self.model.eval()
         running_loss = 0.0
-        running_metrics = {'rmse': 0.0, 'mae': 0.0, 'psnr': 0.0, 'ssim': 0.0}
+        running_metrics = {'rmse': 0.0, 'mae': 0.0, 'psnr': 0.0, 'ssim': 0.0, 'msssim': 0.0, 'corr2': 0.0}
         num_batches = len(self.val_loader)
 
         with torch.no_grad():
@@ -436,9 +465,16 @@ class NnetTrainer:
         avg_metrics = {k: v / num_batches for k, v in running_metrics.items()}
 
         print(
-            f'[Epoch {epoch + 1}] LR: {self.optimizer.param_groups[0]["lr"]}, Val_Loss: {avg_loss:.6f}, Val_RMSE: {avg_metrics["rmse"]:.6f}, '
-            f'Val_MAE: {avg_metrics["mae"]:.6f}, Val_PSNR: {avg_metrics["psnr"]:.6f}, Val_SSIM: {avg_metrics["ssim"]:.6f}')
-
+            f"[Epoch {epoch + 1}] "
+            f"LR: {self.optimizer.param_groups[0]['lr']}, "
+            f"Val_Loss: {avg_loss:.6f}, "
+            f"Val_RMSE: {avg_metrics['rmse']:.6f}, "
+            f"Val_MAE: {avg_metrics['mae']:.6f}, "
+            f"Val_PSNR: {avg_metrics['psnr']:.6f}, "
+            f"Val_SSIM: {avg_metrics['ssim']:.6f}, "
+            f"Val_MSSSIM: {avg_metrics['msssim']:.6f}, "
+            f"Val_CORR2: {avg_metrics['corr2']:.6f}"
+        )
         # 检查是否是当前最佳性能
         if avg_loss < self.best_val_loss:
             self.best_val_loss = avg_loss
@@ -474,9 +510,17 @@ class NnetTrainer:
                     self.tb_writer.add_image(f"Validation/Artifact_Removal", grid, epoch)
 
         # 打印当前最佳结果
-        print(f'[Best Validation] Epoch: {self.best_epoch}, Loss: {self.best_val_loss:.6f}, '
-              f'RMSE: {self.best_val_metrics["rmse"]:.6f}, MAE: {self.best_val_metrics["mae"]:.6f}, '
-              f'PSNR: {self.best_val_metrics["psnr"]:.6f}, SSIM: {self.best_val_metrics["ssim"]:.6f}')
+        print(
+            f"[Best Validation] "
+            f"Epoch: {self.best_epoch}, "
+            f"Loss: {self.best_val_loss:.6f}, "
+            f"RMSE: {self.best_val_metrics['rmse']:.6f}, "
+            f"MAE: {self.best_val_metrics['mae']:.6f}, "
+            f"PSNR: {self.best_val_metrics['psnr']:.6f}, "
+            f"SSIM: {self.best_val_metrics['ssim']:.6f}, "
+            f"MSSSIM: {self.best_val_metrics['msssim']:.6f}, "
+            f"CORR2: {self.best_val_metrics['corr2']:.6f}"
+        )
         # Log to tensorboard
         if self.tb_writer:
             self.tb_writer.add_scalar('Val/Loss', avg_loss, epoch)
@@ -484,6 +528,8 @@ class NnetTrainer:
             self.tb_writer.add_scalar('Val/MAE', avg_metrics['mae'], epoch)
             self.tb_writer.add_scalar('Val/PSNR', avg_metrics['psnr'], epoch)
             self.tb_writer.add_scalar('Val/SSIM', avg_metrics['ssim'], epoch)
+            self.tb_writer.add_scalar('Val/MSSSIM', avg_metrics['msssim'], epoch)
+            self.tb_writer.add_scalar('Val/CORR2', avg_metrics['corr2'], epoch)
 
         # Log to wandb
         if self.use_wandb:
@@ -493,6 +539,8 @@ class NnetTrainer:
                 'val_mae': avg_metrics['mae'],
                 'val_psnr': avg_metrics['psnr'],
                 'val_ssim': avg_metrics['ssim'],
+                'msssim': avg_metrics['msssim'],
+                'val_corr2': avg_metrics['corr2'],
             })
 
     def train(self):
@@ -582,7 +630,7 @@ def main():
     """Main function."""
     print("PyTorch version:", torch.__version__)
     # 设置确定性训练（可复现性）
-    set_determinism(seed=42)
+    set_determinism(seed=TRAINING_CONFIG['seed'])
 
     # 创建实验目录
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
