@@ -4,10 +4,10 @@ Configuration file for N-net training
 
 # Training parameters
 TRAINING_CONFIG = {
-    'train_batch_size': 16, #48
+    'train_batch_size': 48, #48
     'val_batch_size': 48,
     'num_workers': 1,
-    'epochs': 120,
+    'epochs': 50,
     'model_save_dir': './trained_model',
     'weight_l1': 0.1,
     'weight_percep': 0.2,
@@ -19,9 +19,10 @@ TRAINING_CONFIG = {
 # Dataset configuration
 DATASET_CONFIG = {
     'data_root': '/media/zzg/GJ_disk01/data/Medical/4D_Lung_CBCT_Hitachi/dataset',
-    'train_dataset_indices': list(range(0, 9)) + list(range(30, 38)) + list(range(40, 45)),
-    # 'train_dataset_indices': [119],
-    'val_dataset_indices': [119, 11204],
+    # 'train_dataset_indices': list(range(0, 40)),
+    'train_dataset_indices': [0],
+    # 'val_dataset_indices': list(range(40, 45)),
+    'val_dataset_indices': [40],
     'image_size': (512, 512),
     'image_number': 384,
 }
@@ -44,10 +45,11 @@ LOGGING_CONFIG = {
 # Learning rate scheduler
 SCHEDULER_CONFIG = {
     'type': 'CyclicLR',
-    'step_size': 1,
+    'step_size': 1,     #default 5
     'gamma': 0.90,
+    'lr': 1e-5,
     'min_lr': 1e-6,
-    'max_lr': 2e-4,
+    'max_lr': 1e-4,
     # ReduceLROnPlateau 参数
     'plateau_factor': 0.5,
     'plateau_patience': 5,

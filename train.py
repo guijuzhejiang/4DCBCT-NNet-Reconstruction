@@ -7,7 +7,7 @@ import os
 import shutil
 import numpy as np
 import torch
-import torch.nn as nn
+from metrics import Corr2Metric
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from torchsummary import summary
@@ -22,14 +22,14 @@ from model_Nnet import Nnet
 from TrainDataset_Nnet import Nnet_Dataset, LoadRawImgSlice
 from config import TRAINING_CONFIG, DATASET_CONFIG, MODEL_CONFIG, LOGGING_CONFIG, SCHEDULER_CONFIG, DEVICE_CONFIG
 from utils import setup_device, save_model
-from monai.losses import SSIMLoss, PerceptualLoss
+from monai.losses import SSIMLoss, PerceptualLoss, MultiScaleLoss
 from torch.nn import MSELoss, L1Loss
 from monai.utils import set_determinism
 from monai.transforms import (
     Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, ToTensord
 )
 from monai.data import CacheDataset, ThreadDataLoader
-from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric
+from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric, MultiScaleSSIMMetric
 from datetime import datetime
 import wandb
 from img_reader import CustomIMGReader
@@ -43,9 +43,11 @@ class NnetTrainer:
         self.device = setup_device(DEVICE_CONFIG['use_cuda'], DEVICE_CONFIG['cuda_device'])
         # 初始化指标计算器
         self.ssim_metric = SSIMMetric(spatial_dims=2, reduction="mean")
+        self.msssim_metric = MultiScaleSSIMMetric(spatial_dims=2, data_range=1.0, reduction="mean") #因为图像归一化到 [0,1]
         self.mae_metric = MAEMetric(reduction="mean")
         self.psnr_metric = PSNRMetric(max_val=1.0, reduction="mean")
         self.rmse_metric = RMSEMetric(reduction="mean")
+        self.corr2_metric = Corr2Metric(reduction="mean")
         self.setup_logging()
         self.setup_data()
         self.setup_model()
@@ -114,44 +116,30 @@ class NnetTrainer:
         """Setup data loaders."""
         print("Setting up datasets...")
 
-        dataset = Nnet_Dataset(DATASET_CONFIG['data_root'])
+        train_indices = DATASET_CONFIG['train_dataset_indices']
+        val_indices = DATASET_CONFIG['val_dataset_indices']
 
-        # 生成切片样本
-        total = len(dataset)
-        # train_frac, val_frac, test_frac = 0.9, 0.1, 0.1
-        train_frac, val_frac = 0.9, 0.1
+        print("train_indices:", train_indices)
+        train_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], train_indices)
 
-        # 随机打乱索引并划分
-        indices = list(range(total))
-        random.seed(TRAINING_CONFIG['seed'])
-        random.shuffle(indices)
+        print("val_indices:", val_indices)
+        val_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], val_indices)
 
-        n_train = int(total * train_frac)
-        # n_val = int(total * val_frac)
-        # 确保全部分配
-        train_idx = indices[:n_train]
-        val_idx = indices[n_train:]
-        # val_idx = indices[n_train:n_train + n_val]
-        # test_idx = indices[n_train + n_val:]
-
-        # 把索引转换为 list[dict]（MONAI 的 Dataset 要求 data 是 dict 列表）
-        train_dataset = [dataset[i] for i in train_idx]
-        val_dataset = [dataset[i] for i in val_idx]
-        # test_dataset = [dataset[i] for i in test_idx]
+        print(f"train Dataset sizes:{len(train_dataset)}, validation Dataset sizes:{len(val_dataset)}")
 
         # 分割数据集并应用transforms
         self.train_dataset = CacheDataset(
             data=train_dataset,
             transform=train_val_transforms,
-            cache_rate=1.0,  # 将所有数据预处理后缓存到内存，训练时直接读取内存，速度最快，但内存占用高。
-            num_workers=4,
+            cache_rate=0.1,  # 将所有数据预处理后缓存到内存，训练时直接读取内存，速度最快，但内存占用高。
+            num_workers=8,
             progress=True
         )
         self.val_dataset = CacheDataset(
             data=val_dataset,
             transform=train_val_transforms,
-            cache_rate=1.0,
-            num_workers=2,
+            cache_rate=0.2,
+            num_workers=4,
             progress=True
         )
 
@@ -207,11 +195,12 @@ class NnetTrainer:
         weight_ssim = TRAINING_CONFIG['weight_ssim']
         self.optimizer = optim.Adam(
             self.model.parameters(),
-            lr=SCHEDULER_CONFIG['max_lr']
+            lr=SCHEDULER_CONFIG['lr']
         )
 
         # 根据配置选择学习率调度器
         scheduler_type = SCHEDULER_CONFIG.get('type', 'StepLR')
+        print(f"Using {scheduler_type} learning rate scheduler")
 
         if scheduler_type == 'StepLR':
             self.scheduler = optim.lr_scheduler.StepLR(
@@ -287,9 +276,11 @@ class NnetTrainer:
     def calculate_metrics(self, pred, target):
         # 重置指标
         self.ssim_metric.reset()
+        self.msssim_metric.reset()
         self.mae_metric.reset()
         self.psnr_metric.reset()
         self.rmse_metric.reset()
+        self.corr2_metric.reset()
 
         pred = pred.float()
         target = target.float()
@@ -297,6 +288,9 @@ class NnetTrainer:
         # 批量计算指标
         self.ssim_metric(pred, target)
         ssim_val = self.ssim_metric.aggregate().item()
+
+        self.msssim_metric(pred, target)
+        msssim_val = self.msssim_metric.aggregate().item()
 
         self.mae_metric(pred, target)
         mae_val = self.mae_metric.aggregate().item()
@@ -307,11 +301,16 @@ class NnetTrainer:
         self.rmse_metric(pred, target)
         rmse_val = self.rmse_metric.aggregate().item()
 
+        self.corr2_metric(pred, target)
+        corr2_val = self.corr2_metric.aggregate().item()
+
         return {
             "rmse": rmse_val,
             "mae": mae_val,
             "psnr": psnr_val,
-            "ssim": ssim_val
+            "ssim": ssim_val,
+            "msssim": msssim_val,
+            "corr2": corr2_val
         }
 
     def train_epoch(self, epoch):
@@ -345,7 +344,7 @@ class NnetTrainer:
 
                 print(f'[Epoch {epoch + 1} Batch {i + 1}] LR: {self.optimizer.param_groups[0]["lr"]}, '
                       f'Loss: {batch_loss:.6f}, RMSE: {batch_metrics["rmse"]:.6f}, MAE: {batch_metrics["mae"]:.6f}, '
-                      f'PSNR: {batch_metrics["psnr"]:.6f}, SSIM: {batch_metrics["ssim"]:.6f}')
+                      f'PSNR: {batch_metrics["psnr"]:.6f}, SSIM: {batch_metrics["ssim"]:.6f}, MSSSIM: {batch_metrics["msssim"]:.6f}, CORR2: {batch_metrics["corr2"]:.6f}')
                 # Log to tensorboard
                 if self.tb_writer:
                     global_step = epoch * len(self.train_loader) + i
@@ -354,6 +353,10 @@ class NnetTrainer:
                     self.tb_writer.add_scalar('Train/MAE', batch_metrics['mae'], global_step)
                     self.tb_writer.add_scalar('Train/PSNR', batch_metrics['psnr'], global_step)
                     self.tb_writer.add_scalar('Train/SSIM', batch_metrics['ssim'], global_step)
+                    self.tb_writer.add_scalar('Train/MSSSIM', batch_metrics['msssim'], global_step)
+                    self.tb_writer.add_scalar('Train/CORR2', batch_metrics['corr2'], global_step)
+                    self.tb_writer.add_scalar('Learning_Rate', self.optimizer.param_groups[0]['lr'], global_step)
+                    self.tb_writer.add_scalar('Epoch', epoch + 1, global_step)
 
                 # Log to wandb
                 if self.use_wandb:
@@ -363,6 +366,9 @@ class NnetTrainer:
                         'train_mae': batch_metrics['mae'],
                         'train_psnr': batch_metrics['psnr'],
                         'train_ssim': batch_metrics['ssim'],
+                        'train_msssim': batch_metrics['msssim'],
+                        'train_corr2': batch_metrics['corr2'],
+                        'learning_rate': self.optimizer.param_groups[0]['lr'],
                         'epoch': epoch + 1
                     })
             except RuntimeError as exception:
@@ -379,7 +385,7 @@ class NnetTrainer:
         """Validate for one epoch."""
         self.model.eval()
         running_loss = 0.0
-        running_metrics = {'rmse': 0.0, 'mae': 0.0, 'psnr': 0.0, 'ssim': 0.0}
+        running_metrics = {'rmse': 0.0, 'mae': 0.0, 'psnr': 0.0, 'ssim': 0.0, 'msssim': 0.0, 'corr2': 0.0}
         num_batches = len(self.val_loader)
 
         with torch.no_grad():
@@ -404,7 +410,7 @@ class NnetTrainer:
 
         print(
             f'[Epoch {epoch + 1}] LR: {self.optimizer.param_groups[0]["lr"]}, Val_Loss: {avg_loss:.6f}, Val_RMSE: {avg_metrics["rmse"]:.6f}, '
-            f'Val_MAE: {avg_metrics["mae"]:.6f}, Val_PSNR: {avg_metrics["psnr"]:.6f}, Val_SSIM: {avg_metrics["ssim"]:.6f}')
+            f'Val_MAE: {avg_metrics["mae"]:.6f}, Val_PSNR: {avg_metrics["psnr"]:.6f}, Val_SSIM: {avg_metrics["ssim"]:.6f}, Val_MSSSIM: {avg_metrics["msssim"]:.6f}, Val_CORR2: {avg_metrics["corr2"]:.6f}')
 
         # 检查是否是当前最佳性能
         if avg_loss < self.best_val_loss:
@@ -443,7 +449,7 @@ class NnetTrainer:
         # 打印当前最佳结果
         print(f'[Best Validation] Epoch: {self.best_epoch}, Loss: {self.best_val_loss:.6f}, '
               f'RMSE: {self.best_val_metrics["rmse"]:.6f}, MAE: {self.best_val_metrics["mae"]:.6f}, '
-              f'PSNR: {self.best_val_metrics["psnr"]:.6f}, SSIM: {self.best_val_metrics["ssim"]:.6f}')
+              f'PSNR: {self.best_val_metrics["psnr"]:.6f}, SSIM: {self.best_val_metrics["ssim"]:.6f}, MSSSIM: {self.best_val_metrics["msssim"]:.6f}, CORR2: {self.best_val_metrics["corr2"]:.6f}')
         # Log to tensorboard
         if self.tb_writer:
             self.tb_writer.add_scalar('Val/Loss', avg_loss, epoch)
@@ -451,7 +457,8 @@ class NnetTrainer:
             self.tb_writer.add_scalar('Val/MAE', avg_metrics['mae'], epoch)
             self.tb_writer.add_scalar('Val/PSNR', avg_metrics['psnr'], epoch)
             self.tb_writer.add_scalar('Val/SSIM', avg_metrics['ssim'], epoch)
-            self.tb_writer.add_scalar('Learning_Rate', self.optimizer.param_groups[0]['lr'], epoch)
+            self.tb_writer.add_scalar('Val/MSSSIM', avg_metrics['msssim'], epoch)
+            self.tb_writer.add_scalar('Val/CORR2', avg_metrics['corr2'], epoch)
 
         # Log to wandb
         if self.use_wandb:
@@ -461,8 +468,8 @@ class NnetTrainer:
                 'val_mae': avg_metrics['mae'],
                 'val_psnr': avg_metrics['psnr'],
                 'val_ssim': avg_metrics['ssim'],
-                'learning_rate': self.optimizer.param_groups[0]['lr'],
-                'epoch': epoch + 1
+                'msssim': avg_metrics['msssim'],
+                'val_corr2': avg_metrics['corr2'],
             })
 
     def train(self):

@@ -31,7 +31,7 @@ class Nnet_Dataset(data.Dataset):
     保留原始.img格式，支持保留HU值的训练
     """
 
-    def __init__(self, root_data):
+    def __init__(self, root_data, indices):
         """
         初始化数据集
 
@@ -40,16 +40,16 @@ class Nnet_Dataset(data.Dataset):
         HMIndex: 数据集索引列表
         """
         self.samples = []
-        self.base_path = root_data  # 使用root_data作为基础路径
-        print(f"开始构建数据集，基础路径: {self.base_path}")
+        print(f"开始构建数据集，基础路径: {root_data}")
 
         # 遍历所有FOV
         for fov in ["FovL", "FovS_180", "FovS_360"]:
-            fov_path = os.path.join(self.base_path, fov)
+            fov_path = os.path.join(root_data, fov)
 
             # 遍历所有subject
             subjects = [d for d in os.listdir(fov_path)
-                        if os.path.isdir(os.path.join(fov_path, d)) and d.startswith("subject_")]
+                        if os.path.isdir(os.path.join(fov_path, d)) and int(d.split("_")[1]) in indices]
+            print(f"{fov} subjects: {subjects}")
 
             for subject in subjects:
                 subject_path = os.path.join(fov_path, subject)

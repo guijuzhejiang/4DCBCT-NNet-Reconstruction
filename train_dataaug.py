@@ -239,6 +239,7 @@ class NnetTrainer:
 
         # 根据配置选择学习率调度器
         scheduler_type = SCHEDULER_CONFIG.get('type', 'StepLR')
+        print(f"Using {scheduler_type} learning rate scheduler")
 
         if scheduler_type == 'StepLR':
             self.scheduler = optim.lr_scheduler.StepLR(
@@ -382,6 +383,8 @@ class NnetTrainer:
                     self.tb_writer.add_scalar('Train/MAE', batch_metrics['mae'], global_step)
                     self.tb_writer.add_scalar('Train/PSNR', batch_metrics['psnr'], global_step)
                     self.tb_writer.add_scalar('Train/SSIM', batch_metrics['ssim'], global_step)
+                    self.tb_writer.add_scalar('Learning_Rate', self.optimizer.param_groups[0]['lr'], global_step)
+                    self.tb_writer.add_scalar('Epoch', epoch + 1, global_step)
 
                 # Log to wandb
                 if self.use_wandb:
@@ -391,6 +394,7 @@ class NnetTrainer:
                         'train_mae': batch_metrics['mae'],
                         'train_psnr': batch_metrics['psnr'],
                         'train_ssim': batch_metrics['ssim'],
+                        'learning_rate': self.optimizer.param_groups[0]['lr'],
                         'epoch': epoch + 1
                     })
 
@@ -480,7 +484,6 @@ class NnetTrainer:
             self.tb_writer.add_scalar('Val/MAE', avg_metrics['mae'], epoch)
             self.tb_writer.add_scalar('Val/PSNR', avg_metrics['psnr'], epoch)
             self.tb_writer.add_scalar('Val/SSIM', avg_metrics['ssim'], epoch)
-            self.tb_writer.add_scalar('Learning_Rate', self.optimizer.param_groups[0]['lr'], epoch)
 
         # Log to wandb
         if self.use_wandb:
@@ -490,8 +493,6 @@ class NnetTrainer:
                 'val_mae': avg_metrics['mae'],
                 'val_psnr': avg_metrics['psnr'],
                 'val_ssim': avg_metrics['ssim'],
-                'learning_rate': self.optimizer.param_groups[0]['lr'],
-                'epoch': epoch + 1
             })
 
     def train(self):

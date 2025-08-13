@@ -17,7 +17,7 @@ plt.rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['axes.unicode_minus'] = False  # 正确显示负号
 
 # 设置参数
-DATA_ROOT = "/media/zzg/GJ_disk01/data/Medical/4D_Lung_CBCT_Hitachi/dataset"
+DATA_ROOT = "path/dataset"
 FOVS = ["FovL", "FovS_180", "FovS_360"]
 SAMPLE_SIZE = 500  # 分析的样本数量
 OUTPUT_DIR = "./eda_results"
