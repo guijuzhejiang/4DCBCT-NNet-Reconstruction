@@ -40,6 +40,8 @@ class NnetTrainer:
     def __init__(self, experiment_dir):
         self.experiment_dir = experiment_dir
         self.device = setup_device(DEVICE_CONFIG['use_cuda'], DEVICE_CONFIG['cuda_device'])
+        self.scheduler_type = SCHEDULER_CONFIG.get('type', 'StepLR')
+        print(f"Using {self.scheduler_type} learning rate scheduler")
         # 初始化指标计算器
         self.ssim_metric = SSIMMetric(spatial_dims=2, reduction="mean")
         self.msssim_metric = MultiScaleSSIMMetric(spatial_dims=2, data_range=1.0, reduction="mean") #因为图像归一化到 [0,1]
@@ -55,6 +57,7 @@ class NnetTrainer:
         self.best_val_loss = float('inf')
         self.best_val_metrics = None
         self.best_epoch = 0
+
 
     def setup_logging(self):
         """Setup wandb and tensorboard logging."""
@@ -198,39 +201,37 @@ class NnetTrainer:
         )
 
         # 根据配置选择学习率调度器
-        scheduler_type = SCHEDULER_CONFIG.get('type', 'StepLR')
-        print(f"Using {scheduler_type} learning rate scheduler")
 
-        if scheduler_type == 'StepLR':
+        if self.scheduler_type == 'StepLR':
             self.scheduler = optim.lr_scheduler.StepLR(
                 self.optimizer,
-                step_size=SCHEDULER_CONFIG['step_size'] * batches_per_epoch,
+                step_size=SCHEDULER_CONFIG['step_size'],
                 gamma=SCHEDULER_CONFIG['gamma']
             )
-        # elif scheduler_type == 'ReduceLROnPlateau':         #停止改善时降低学习率
-        #     # ReduceLROnPlateau通常在每个epoch后更新，但我们在validate_epoch后更新
-        #     self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        #         self.optimizer,
-        #         mode='min',
-        #         factor=SCHEDULER_CONFIG['plateau_factor'],
-        #         patience=SCHEDULER_CONFIG['plateau_patience'],
-        #         verbose=True,
-        #         min_lr=SCHEDULER_CONFIG['min_lr']
-        #     )
-        elif scheduler_type == 'CosineAnnealingWarmRestarts':           #热重启的余弦退火
+        elif self.scheduler_type == 'ReduceLROnPlateau':         #停止改善时降低学习率
+            # ReduceLROnPlateau通常在每个epoch后更新，但我们在validate_epoch后更新
+            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer,
+                mode='min',
+                factor=SCHEDULER_CONFIG['plateau_factor'],
+                patience=SCHEDULER_CONFIG['plateau_patience'],
+                verbose=True,
+                min_lr=SCHEDULER_CONFIG['min_lr']
+            )
+        elif self.scheduler_type == 'CosineAnnealingWarmRestarts':           #热重启的余弦退火
             self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 self.optimizer,
                 T_0=SCHEDULER_CONFIG['T_0'] * batches_per_epoch,
                 T_mult=SCHEDULER_CONFIG['T_mult'],
                 eta_min=SCHEDULER_CONFIG['min_lr']
             )
-        elif scheduler_type == 'CosineAnnealingLR':         #余弦退火
+        elif self.scheduler_type == 'CosineAnnealingLR':         #余弦退火
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
                 T_max=total_batches,
                 eta_min=SCHEDULER_CONFIG['min_lr']
             )
-        elif scheduler_type == 'CyclicLR':          # 循环学习率
+        elif self.scheduler_type == 'CyclicLR':          # 循环学习率
             self.scheduler = optim.lr_scheduler.CyclicLR(
                 self.optimizer,
                 base_lr=SCHEDULER_CONFIG['min_lr'],  # 基础学习率
@@ -238,7 +239,7 @@ class NnetTrainer:
                 step_size_up=SCHEDULER_CONFIG['epoch_size_up'] * batches_per_epoch,  # 从基础到最大所需的步数
                 mode=SCHEDULER_CONFIG['mode']  # 三角模式
             )
-        elif scheduler_type == 'OneCycleLR':          # 循环学习率
+        elif self.scheduler_type == 'OneCycleLR':          # 循环学习率
             self.scheduler = optim.lr_scheduler.OneCycleLR(
                 self.optimizer,
                 max_lr=SCHEDULER_CONFIG['max_lr'],
@@ -264,11 +265,11 @@ class NnetTrainer:
         # 组合损失函数
         def combined_loss(pred, target):
             mse = self.mse_loss(pred, target)
-            l1 = self.L1_loss(pred, target)
-            ssim = self.ssim_loss(pred, target)
-            percep = self.perceptual_loss(pred, target)
-            loss_total = weight_mse * mse + weight_l1 * l1 + weight_percep * percep + weight_ssim * ssim
-            # loss_total = mse
+            # l1 = self.L1_loss(pred, target)
+            # ssim = self.ssim_loss(pred, target)
+            # percep = self.perceptual_loss(pred, target)
+            # loss_total = weight_mse * mse + weight_l1 * l1 + weight_percep * percep + weight_ssim * ssim
+            loss_total = mse
             return loss_total
 
         self.criterion = combined_loss
@@ -336,7 +337,8 @@ class NnetTrainer:
                 # 优化器更新
                 self.optimizer.step()
                 # 学习率调度器更新
-                self.scheduler.step()
+                if not self.scheduler_type in ['StepLR', 'ReduceLROnPlateau']:
+                    self.scheduler.step()
                 # 损失
                 batch_loss = loss.item()
                 # Calculate metrics
@@ -506,6 +508,9 @@ class NnetTrainer:
             self.train_epoch(epoch)
             # Validation
             self.validate_epoch(epoch)
+            # 学习率调度器更新
+            if self.scheduler_type in ['StepLR', 'ReduceLROnPlateau']:
+                self.scheduler.step()
 
         self.cleanup()
 

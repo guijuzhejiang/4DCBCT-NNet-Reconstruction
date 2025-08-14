@@ -7,7 +7,7 @@ TRAINING_CONFIG = {
     'train_batch_size': 48, #48
     'val_batch_size': 48,
     'num_workers': 1,
-    'epochs': 50,
+    'epochs': 10,
     'model_save_dir': './trained_model',
     'weight_l1': 0.1,
     'weight_percep': 0.2,
@@ -46,7 +46,7 @@ LOGGING_CONFIG = {
 
 # Learning rate scheduler
 SCHEDULER_CONFIG = {
-    'type': 'CyclicLR',
+    'type': 'StepLR',
     'step_size': 1,     #default 5
     'gamma': 0.90,
     'lr': 1e-5,
