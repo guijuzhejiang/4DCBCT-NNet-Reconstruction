@@ -450,7 +450,7 @@ def generate_enhanced_visualizations(data_root, output_dir):
 
 # 使用示例
 if __name__ == "__main__":
-    DATA_ROOT = DATASET_CONFIG['data_root']  # 替换为您的数据路径
+    DATA_ROOT = DATASET_CONFIG['data_root']
     OUTPUT_DIR = "./enhanced_eda_results"
 
     generate_enhanced_visualizations(DATA_ROOT, OUTPUT_DIR)

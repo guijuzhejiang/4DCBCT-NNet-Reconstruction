@@ -27,11 +27,13 @@ from monai.utils import set_determinism
 from monai.transforms import (
     Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, ToTensord
 )
-from monai.data import CacheDataset, ThreadDataLoader
+from monai.data import CacheDataset, ThreadDataLoader, SmartCacheDataset
 from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric, MultiScaleSSIMMetric
 from datetime import datetime
 import wandb
 from img_reader import CustomIMGReader
+import psutil
+import gc
 
 
 class NnetTrainer:
@@ -57,7 +59,6 @@ class NnetTrainer:
         self.best_val_loss = float('inf')
         self.best_val_metrics = None
         self.best_epoch = 0
-
 
     def setup_logging(self):
         """Setup wandb and tensorboard logging."""
@@ -134,14 +135,27 @@ class NnetTrainer:
             data=train_dataset,
             transform=train_val_transforms,
             cache_rate=0.1,  # 将所有数据预处理后缓存到内存，训练时直接读取内存，速度最快，但内存占用高。
-            num_workers=8,
+            num_workers=4,
+            copy_cache=False,
             progress=True
         )
+        # self.train_dataset = SmartCacheDataset(
+        #     data=train_dataset,
+        #     transform=train_val_transforms,
+        #     replace_rate=1,  # 每个 epoch 替换 10% 的缓存
+        #     cache_rate=0.06,  # 缓存 5% 的样本（按你可用内存调整）
+        #     num_init_workers=2,  # 初始化并行 worker
+        #     num_replace_workers=2,  # 替换时的后台并行 worker
+        #     shuffle=True,  # 打乱 data_list 再选 cache
+        #     progress=True,
+        #     copy_cache=False,
+        #     runtime_cache=False
+        # )
         self.val_dataset = CacheDataset(
             data=val_dataset,
             transform=train_val_transforms,
             cache_rate=0.2,
-            num_workers=4,
+            num_workers=2,
             progress=True
         )
 
@@ -153,8 +167,9 @@ class NnetTrainer:
             num_workers=TRAINING_CONFIG['num_workers'],
             drop_last=False,
             pin_memory=torch.cuda.is_available(),
-            prefetch_factor=2,
-            persistent_workers=True
+            # pin_memory=False,
+            prefetch_factor=1,
+            persistent_workers=False
         )
 
         self.val_loader = ThreadDataLoader(
@@ -162,8 +177,22 @@ class NnetTrainer:
             batch_size=TRAINING_CONFIG['val_batch_size'],
             num_workers=TRAINING_CONFIG['num_workers'],
             pin_memory=torch.cuda.is_available(),
-            prefetch_factor=2
+            # pin_memory=False,
+            prefetch_factor=1
         )
+
+    def free_memory(self):
+        """强制释放内存资源"""
+        # 强制Python垃圾回收
+        gc.collect()
+
+        # 清空CUDA缓存
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # 报告内存状态
+        mem = psutil.virtual_memory()
+        print(f"内存释放后: 已用 {mem.used / 1e9:.1f}GB, 可用 {mem.available / 1e9:.1f}GB")
 
     def setup_model(self):
         """Setup model and move to device."""
@@ -275,36 +304,37 @@ class NnetTrainer:
         self.criterion = combined_loss
 
     def calculate_metrics(self, pred, target):
-        # 重置指标
-        self.ssim_metric.reset()
-        self.msssim_metric.reset()
-        self.mae_metric.reset()
-        self.psnr_metric.reset()
-        self.rmse_metric.reset()
-        self.corr2_metric.reset()
+        with torch.no_grad():
+            # 重置指标
+            self.ssim_metric.reset()
+            self.msssim_metric.reset()
+            self.mae_metric.reset()
+            self.psnr_metric.reset()
+            self.rmse_metric.reset()
+            self.corr2_metric.reset()
 
-        pred = pred.float()
-        target = target.float()
+            pred = pred.float()
+            target = target.float()
 
-        # 批量计算指标
-        self.ssim_metric(pred, target)
-        ssim_val = self.ssim_metric.aggregate().item()
+            # 批量计算指标
+            self.ssim_metric(pred, target)
+            ssim_val = self.ssim_metric.aggregate().item()
 
-        self.msssim_metric(pred, target)
-        msssim_val = self.msssim_metric.aggregate().item()
+            self.msssim_metric(pred, target)
+            msssim_val = self.msssim_metric.aggregate().item()
 
-        self.mae_metric(pred, target)
-        mae_val = self.mae_metric.aggregate().item()
+            self.mae_metric(pred, target)
+            mae_val = self.mae_metric.aggregate().item()
 
-        self.psnr_metric(pred, target)
-        psnr_val = self.psnr_metric.aggregate().item()
+            self.psnr_metric(pred, target)
+            psnr_val = self.psnr_metric.aggregate().item()
 
-        self.rmse_metric(pred, target)
-        rmse_val = self.rmse_metric.aggregate().item()
+            self.rmse_metric(pred, target)
+            rmse_val = self.rmse_metric.aggregate().item()
 
-        self.corr2_metric(pred, target)
-        corr2_val = self.corr2_metric.aggregate().item()
-
+            self.corr2_metric(pred, target)
+            corr2_val = self.corr2_metric.aggregate().item()
+            del pred, target
         return {
             "rmse": rmse_val,
             "mae": mae_val,
@@ -339,48 +369,61 @@ class NnetTrainer:
                 # 学习率调度器更新
                 if not self.scheduler_type in ['StepLR', 'ReduceLROnPlateau']:
                     self.scheduler.step()
-                # 损失
-                batch_loss = loss.item()
-                # Calculate metrics
-                batch_metrics = self.calculate_metrics(prediction, labels)
 
-                print(
-                    f"[Epoch {epoch + 1} Batch {i + 1}] "
-                    f"LR: {self.optimizer.param_groups[0]['lr']}, "
-                    f"Loss: {batch_loss:.6f}, "
-                    f"RMSE: {batch_metrics['rmse']:.6f}, "
-                    f"MAE: {batch_metrics['mae']:.6f}, "
-                    f"PSNR: {batch_metrics['psnr']:.6f}, "
-                    f"SSIM: {batch_metrics['ssim']:.6f}, "
-                    f"MSSSIM: {batch_metrics['msssim']:.6f}, "
-                    f"CORR2: {batch_metrics['corr2']:.6f}"
-                )
-                # Log to tensorboard
-                if self.tb_writer:
-                    global_step = epoch * len(self.train_loader) + i
-                    self.tb_writer.add_scalar('Train/Loss', batch_loss, global_step)
-                    self.tb_writer.add_scalar('Train/RMSE', batch_metrics['rmse'], global_step)
-                    self.tb_writer.add_scalar('Train/MAE', batch_metrics['mae'], global_step)
-                    self.tb_writer.add_scalar('Train/PSNR', batch_metrics['psnr'], global_step)
-                    self.tb_writer.add_scalar('Train/SSIM', batch_metrics['ssim'], global_step)
-                    self.tb_writer.add_scalar('Train/MSSSIM', batch_metrics['msssim'], global_step)
-                    self.tb_writer.add_scalar('Train/CORR2', batch_metrics['corr2'], global_step)
-                    self.tb_writer.add_scalar('Learning_Rate', self.optimizer.param_groups[0]['lr'], global_step)
-                    self.tb_writer.add_scalar('Epoch', epoch + 1, global_step)
+                if i % 10 == 0:
+                    # 损失
+                    batch_loss = loss.item()
+                    # Calculate metrics
+                    with torch.no_grad():
+                        pred_det = prediction.detach()
+                        lbl_det = labels.detach()
+                        batch_metrics = self.calculate_metrics(pred_det, lbl_det)
+                        # detach and move to cpu
+                        # pred_cpu = prediction.detach().cpu()
+                        # lbl_cpu = labels.detach().cpu()
+                        # # convert to plain torch.Tensor (strip MetaTensor meta)
+                        # pred_plain = torch.from_numpy(pred_cpu.numpy())
+                        # lbl_plain = torch.from_numpy(lbl_cpu.numpy())
+                        # # compute metrics on plain tensors
+                        # batch_metrics = self.calculate_metrics(pred_plain, lbl_plain)
 
-                # Log to wandb
-                if self.use_wandb:
-                    wandb.log({
-                        'train_loss': batch_loss,
-                        'train_rmse': batch_metrics['rmse'],
-                        'train_mae': batch_metrics['mae'],
-                        'train_psnr': batch_metrics['psnr'],
-                        'train_ssim': batch_metrics['ssim'],
-                        'train_msssim': batch_metrics['msssim'],
-                        'train_corr2': batch_metrics['corr2'],
-                        'learning_rate': self.optimizer.param_groups[0]['lr'],
-                        'epoch': epoch + 1
-                    })
+                    print(
+                        f"[Epoch {epoch + 1} Batch {i + 1}] "
+                        f"LR: {self.optimizer.param_groups[0]['lr']}, "
+                        f"Loss: {batch_loss:.6f}, "
+                        f"RMSE: {batch_metrics['rmse']:.6f}, "
+                        f"MAE: {batch_metrics['mae']:.6f}, "
+                        f"PSNR: {batch_metrics['psnr']:.6f}, "
+                        f"SSIM: {batch_metrics['ssim']:.6f}, "
+                        f"MSSSIM: {batch_metrics['msssim']:.6f}, "
+                        f"CORR2: {batch_metrics['corr2']:.6f}"
+                    )
+                    # Log to tensorboard,减轻 wandb 后端压力，减少本机缓存增长
+                    if self.tb_writer:
+                        global_step = epoch * len(self.train_loader) + i
+                        self.tb_writer.add_scalar('Train/Loss', batch_loss, global_step)
+                        self.tb_writer.add_scalar('Train/RMSE', batch_metrics['rmse'], global_step)
+                        self.tb_writer.add_scalar('Train/MAE', batch_metrics['mae'], global_step)
+                        self.tb_writer.add_scalar('Train/PSNR', batch_metrics['psnr'], global_step)
+                        self.tb_writer.add_scalar('Train/SSIM', batch_metrics['ssim'], global_step)
+                        self.tb_writer.add_scalar('Train/MSSSIM', batch_metrics['msssim'], global_step)
+                        self.tb_writer.add_scalar('Train/CORR2', batch_metrics['corr2'], global_step)
+                        self.tb_writer.add_scalar('Learning_Rate', self.optimizer.param_groups[0]['lr'], global_step)
+                        self.tb_writer.add_scalar('Epoch', epoch + 1, global_step)
+
+                    # Log to wandb,减轻 wandb 后端压力，减少本机缓存增长
+                    if self.use_wandb:
+                        wandb.log({
+                            'train_loss': batch_loss,
+                            'train_rmse': batch_metrics['rmse'],
+                            'train_mae': batch_metrics['mae'],
+                            'train_psnr': batch_metrics['psnr'],
+                            'train_ssim': batch_metrics['ssim'],
+                            'train_msssim': batch_metrics['msssim'],
+                            'train_corr2': batch_metrics['corr2'],
+                            'learning_rate': self.optimizer.param_groups[0]['lr'],
+                            'epoch': epoch + 1
+                        })
             except RuntimeError as exception:
                 if "out of memory" in str(exception):
                     print("WARNING: out of memory")
@@ -508,10 +551,15 @@ class NnetTrainer:
             self.train_epoch(epoch)
             # Validation
             self.validate_epoch(epoch)
+            #把准备好data的替换项交换进缓存
+            # self.train_dataset.update_cache()
+            # 强制内存释放
+            self.free_memory()
             # 学习率调度器更新
             if self.scheduler_type in ['StepLR', 'ReduceLROnPlateau']:
                 self.scheduler.step()
-
+        #stop background workers
+        # self.train_dataset.shutdown()
         self.cleanup()
 
     def cleanup(self):
