@@ -6,8 +6,8 @@ Configuration file for N-net training
 TRAINING_CONFIG = {
     'train_batch_size': 48, #48
     'val_batch_size': 48,
-    'num_workers': 1,
-    'epochs': 10,
+    'num_workers': 8,
+    'epochs': 50,
     'model_save_dir': './trained_model',
     'weight_l1': 0.1,
     'weight_percep': 0.2,
@@ -19,6 +19,10 @@ TRAINING_CONFIG = {
 # Dataset configuration
 DATASET_CONFIG = {
     'data_root': '/media/zzg/GJ_disk01/data/Medical/4D_Lung_CBCT_Hitachi/dataset',
+    'LMDB_cache_dir_train': '/media/zzg/GJ_disk02/data/Medical/4D_Lung_CBCT_Hitachi/LMDB_cache_dir_train',
+    'LMDB_cache_dir_val': '/media/zzg/GJ_disk02/data/Medical/4D_Lung_CBCT_Hitachi/LMDB_cache_dir_val',
+    'map_size_train': 500,        # 500GB空间预留
+    'map_size_val': 100,          # 100GB空间预留
     'train_dataset_indices': list(range(0, 40)),
     # 'train_dataset_indices': [0],
     'val_dataset_indices': list(range(40, 45)),

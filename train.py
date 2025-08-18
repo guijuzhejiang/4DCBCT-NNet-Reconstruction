@@ -27,13 +27,22 @@ from monai.utils import set_determinism
 from monai.transforms import (
     Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, ToTensord
 )
-from monai.data import CacheDataset, ThreadDataLoader, SmartCacheDataset
+from monai.data import Dataset, CacheDataset, ThreadDataLoader, SmartCacheDataset, PersistentDataset, LMDBDataset
 from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric, MultiScaleSSIMMetric
 from datetime import datetime
 import wandb
 from img_reader import CustomIMGReader
 import psutil
 import gc
+from monai.transforms import MapTransform
+
+
+class RandomAugment(MapTransform):
+    def __init__(self, augmentations):
+        self.augment = augmentations
+
+    def __call__(self, data):
+        return self.augment(data)
 
 
 class NnetTrainer:
@@ -99,8 +108,25 @@ class NnetTrainer:
     def setup_data(self):
         # 创建reader
         reader = CustomIMGReader(image_shape=(1, 512, 512), dtype=np.int16, output_dtype=float)
-        # 训练集transforms - 针对伪影任务的增强
-        train_val_transforms = Compose([
+        # 确定性变换（适合缓存）
+        deterministic_transforms = Compose([
+            LoadImaged(keys=["img", "prior", "label"], reader=reader),
+            EnsureChannelFirstd(keys=["img", "prior", "label"]),
+            ScaleIntensityRanged(
+                keys=["img", "prior", "label"],
+                a_min=-1000,
+                a_max=400,
+                b_min=0.0,
+                b_max=1.0,
+                clip=True,
+            )
+        ])
+        # 随机增强（不适合缓存）
+        tensord_augmentations = Compose([
+            # 转换为Tensor
+            ToTensord(keys=["img", "prior", "label"])
+        ])
+        val_transforms = Compose([
             LoadImaged(keys=["img", "prior", "label"], reader=reader),
             EnsureChannelFirstd(keys=["img", "prior", "label"]),
             ScaleIntensityRanged(
@@ -131,14 +157,54 @@ class NnetTrainer:
         print(f"train Dataset sizes:{len(train_dataset)}, validation Dataset sizes:{len(val_dataset)}")
 
         # 分割数据集并应用transforms
-        self.train_dataset = CacheDataset(
+        # self.train_dataset = Dataset(
+        #     data=train_dataset,
+        #     transform=train_val_transforms,
+        # )
+        # self.val_dataset = Dataset(
+        #     data=val_dataset,
+        #     transform=train_val_transforms,
+        # )
+        cache_dir_train = DATASET_CONFIG['LMDB_cache_dir_train']
+        cache_dir_val = DATASET_CONFIG['LMDB_cache_dir_val']
+        os.makedirs(cache_dir_train, exist_ok=True)
+        os.makedirs(cache_dir_val, exist_ok=True)
+        base_train_dataset = LMDBDataset(
             data=train_dataset,
-            transform=train_val_transforms,
-            cache_rate=0.1,  # 将所有数据预处理后缓存到内存，训练时直接读取内存，速度最快，但内存占用高。
-            num_workers=4,
-            copy_cache=False,
-            progress=True
+            transform=deterministic_transforms,  # 只缓存确定性变换
+            cache_dir=cache_dir_train,
+            lmdb_kwargs={
+                "map_size": DATASET_CONFIG['map_size_train'] * 1024 ** 3,
+                "readahead": True,  # HDD性能关键
+                "meminit": False,  # 加速初始化
+                "lock": False  # 多进程安全
+            },
+            progress=True,  # 显示进度条
+            pickle_protocol=5  # 高效序列化
         )
+        self.train_dataset = RandomAugment(tensord_augmentations)(base_train_dataset)
+
+        # 创建验证集 LMDBDataset
+        self.val_dataset = LMDBDataset(
+            data=val_dataset,
+            transform=val_transforms,
+            cache_dir=cache_dir_val,  # 使用单独的验证集缓存目录
+            lmdb_kwargs={
+                "map_size": DATASET_CONFIG['map_size_val'] * 1024 ** 3,
+                "readahead": True,  # HDD优化
+                "meminit": False
+            },
+            progress=True,
+            pickle_protocol=5
+        )
+        # self.train_dataset = CacheDataset(
+        #     data=train_dataset,
+        #     transform=train_val_transforms,
+        #     cache_rate=0.05,  # 将所有数据预处理后缓存到内存，训练时直接读取内存，速度最快，但内存占用高。
+        #     num_workers=4,
+        #     copy_cache=False,
+        #     progress=True
+        # )
         # self.train_dataset = SmartCacheDataset(
         #     data=train_dataset,
         #     transform=train_val_transforms,
@@ -151,13 +217,13 @@ class NnetTrainer:
         #     copy_cache=False,
         #     runtime_cache=False
         # )
-        self.val_dataset = CacheDataset(
-            data=val_dataset,
-            transform=train_val_transforms,
-            cache_rate=0.2,
-            num_workers=2,
-            progress=True
-        )
+        # self.val_dataset = CacheDataset(
+        #     data=val_dataset,
+        #     transform=train_val_transforms,
+        #     cache_rate=0.2,
+        #     num_workers=2,
+        #     progress=True
+        # )
 
         # MONAI优化后的DataLoader
         self.train_loader = ThreadDataLoader(
@@ -167,9 +233,8 @@ class NnetTrainer:
             num_workers=TRAINING_CONFIG['num_workers'],
             drop_last=False,
             pin_memory=torch.cuda.is_available(),
-            # pin_memory=False,
-            prefetch_factor=1,
-            persistent_workers=False
+            prefetch_factor=4,
+            persistent_workers=True,
         )
 
         self.val_loader = ThreadDataLoader(
@@ -177,8 +242,8 @@ class NnetTrainer:
             batch_size=TRAINING_CONFIG['val_batch_size'],
             num_workers=TRAINING_CONFIG['num_workers'],
             pin_memory=torch.cuda.is_available(),
-            # pin_memory=False,
-            prefetch_factor=1
+            prefetch_factor=4,
+            persistent_workers=True,
         )
 
     def free_memory(self):

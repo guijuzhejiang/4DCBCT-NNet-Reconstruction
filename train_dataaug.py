@@ -28,13 +28,22 @@ from monai.transforms import (
     Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, RandHistogramShiftd, RandBiasFieldd, RandGaussianNoised,
     RandGaussianSmoothd, RandCoarseDropoutd, RandAffined, RandAdjustContrastd, ToTensord
 )
-from monai.data import CacheDataset, ThreadDataLoader
+from monai.data import CacheDataset, ThreadDataLoader, LMDBDataset
 from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric, MultiScaleSSIMMetric
 from datetime import datetime
 import wandb
 from img_reader import CustomIMGReader
 import psutil
 import gc
+from monai.transforms import MapTransform
+
+
+class RandomAugment(MapTransform):
+    def __init__(self, augmentations):
+        self.augment = augmentations
+
+    def __call__(self, data):
+        return self.augment(data)
 
 
 class NnetTrainer:
@@ -100,8 +109,8 @@ class NnetTrainer:
     def setup_data(self):
         # 创建reader
         reader = CustomIMGReader(image_shape=(1, 512, 512), dtype=np.int16, output_dtype=float)
-        # 训练集transforms - 针对伪影任务的增强
-        train_transforms = Compose([
+        # 确定性变换（适合缓存）
+        deterministic_transforms = Compose([
             LoadImaged(keys=["img", "prior", "label"], reader=reader),
             EnsureChannelFirstd(keys=["img", "prior", "label"]),
             ScaleIntensityRanged(
@@ -111,8 +120,10 @@ class NnetTrainer:
                 b_min=0.0,
                 b_max=1.0,
                 clip=True,
-            ),
-
+            )
+        ])
+        # 随机增强（不适合缓存）
+        random_augmentations = Compose([
             # 运动伪影相关增强
             RandAffined(
                 keys=["img", "prior", "label"],
@@ -123,8 +134,7 @@ class NnetTrainer:
                 scale_range=(0.1, 0.1),
                 padding_mode="zeros"
             ),
-
-            # 金属伪影相关增强, 多个黑色方块，考虑删除
+            # 金属伪影相关增强
             RandCoarseDropoutd(
                 keys=["img"],
                 holes=10,
@@ -133,18 +143,14 @@ class NnetTrainer:
                 prob=1.0,
                 fill_value=-1  # 模拟金属伪影的低信号
             ),
-
             # 噪声相关增强
             RandGaussianNoised(keys=["img"], prob=1.0, mean=0.0, std=0.05),
             RandGaussianSmoothd(keys=["img"], sigma_x=(0.5, 1.0), sigma_y=(0.5, 1.0), prob=1.0),
-
             # 对比度增强
             RandAdjustContrastd(keys=["img"], gamma=(0.8, 1.2), prob=1.0),
-
             # 伪影特定增强补充
-            RandBiasFieldd(keys=["img"], degree=3, coeff_range=(0.0, 0.1), prob=1.0),  # 模拟偏置场伪影
-            RandHistogramShiftd(keys=["img"], num_control_points=5, prob=1.0),  # 模拟强度变化
-
+            RandBiasFieldd(keys=["img"], degree=3, coeff_range=(0.0, 0.1), prob=1.0),
+            RandHistogramShiftd(keys=["img"], num_control_points=5, prob=1.0),
             # 转换为Tensor
             ToTensord(keys=["img", "prior", "label"])
         ])
@@ -178,21 +184,39 @@ class NnetTrainer:
 
         print(f"train Dataset sizes:{len(train_dataset)}, validation Dataset sizes:{len(val_dataset)}")
 
-        # 分割数据集并应用transforms
-        self.train_dataset = CacheDataset(
+        cache_dir_train = DATASET_CONFIG['LMDB_cache_dir_train']
+        cache_dir_val = DATASET_CONFIG['LMDB_cache_dir_val']
+        os.makedirs(cache_dir_train, exist_ok=True)
+        os.makedirs(cache_dir_val, exist_ok=True)
+
+        # 训练集LMDBDataset（仅缓存确定性变换）
+        base_train_dataset = LMDBDataset(
             data=train_dataset,
-            transform=train_transforms,
-            cache_rate=0.1,  # 将所有数据预处理后缓存到内存，训练时直接读取内存，速度最快，但内存占用高。
-            num_workers=4,
-            copy_cache=False,
-            progress=True
+            transform=deterministic_transforms,
+            cache_dir=cache_dir_train,
+            lmdb_kwargs={
+                "map_size": DATASET_CONFIG['map_size_train'] * 1024 ** 3,
+                "readahead": True,  # HDD性能关键
+                "meminit": False,  # 加速初始化
+                "lock": False  # 多进程安全
+            },
+            progress=True,  # 显示进度条
+            pickle_protocol=5  # 高效序列化
         )
-        self.val_dataset = CacheDataset(
+        self.train_dataset = RandomAugment(random_augmentations)(base_train_dataset)
+
+        # ========== 验证集 ==========
+        self.val_dataset = LMDBDataset(
             data=val_dataset,
             transform=val_transforms,
-            cache_rate=0.2,
-            num_workers=2,
-            progress=True
+            cache_dir=cache_dir_val,
+            lmdb_kwargs={
+                "map_size": DATASET_CONFIG['map_size_val'] * 1024 ** 3,
+                "readahead": True,  # HDD优化
+                "meminit": False
+            },
+            progress=True,
+            pickle_protocol=5
         )
 
         # MONAI优化后的DataLoader
@@ -203,9 +227,8 @@ class NnetTrainer:
             num_workers=TRAINING_CONFIG['num_workers'],
             drop_last=False,
             pin_memory=torch.cuda.is_available(),
-            # pin_memory=False,
-            prefetch_factor=1,
-            persistent_workers=False
+            prefetch_factor=4,
+            persistent_workers=True
         )
 
         self.val_loader = ThreadDataLoader(
@@ -213,8 +236,8 @@ class NnetTrainer:
             batch_size=TRAINING_CONFIG['val_batch_size'],
             num_workers=TRAINING_CONFIG['num_workers'],
             pin_memory=torch.cuda.is_available(),
-            # pin_memory=False,
-            prefetch_factor=1
+            prefetch_factor=4,
+            persistent_workers=True
         )
 
     def free_memory(self):
