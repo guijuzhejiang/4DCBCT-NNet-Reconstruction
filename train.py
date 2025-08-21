@@ -32,17 +32,7 @@ from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric, MultiSc
 from datetime import datetime
 import wandb
 from img_reader import CustomIMGReader
-import psutil
-import gc
-from monai.transforms import MapTransform
-
-
-class RandomAugment(MapTransform):
-    def __init__(self, augmentations):
-        self.augment = augmentations
-
-    def __call__(self, data):
-        return self.augment(data)
+from utils import free_memory
 
 
 class NnetTrainer:
@@ -53,6 +43,7 @@ class NnetTrainer:
         self.device = setup_device(DEVICE_CONFIG['use_cuda'], DEVICE_CONFIG['cuda_device'])
         self.scheduler_type = SCHEDULER_CONFIG.get('type', 'StepLR')
         print(f"Using {self.scheduler_type} learning rate scheduler")
+        self.fov_type = DATASET_CONFIG.get('fov_type', 'FovL')
         # 初始化指标计算器
         self.ssim_metric = SSIMMetric(spatial_dims=2, reduction="mean")
         self.msssim_metric = MultiScaleSSIMMetric(spatial_dims=2, data_range=1.0, reduction="mean") #因为图像归一化到 [0,1]
@@ -108,25 +99,7 @@ class NnetTrainer:
     def setup_data(self):
         # 创建reader
         reader = CustomIMGReader(image_shape=(1, 512, 512), dtype=np.int16, output_dtype=float)
-        # 确定性变换（适合缓存）
-        deterministic_transforms = Compose([
-            LoadImaged(keys=["img", "prior", "label"], reader=reader),
-            EnsureChannelFirstd(keys=["img", "prior", "label"]),
-            ScaleIntensityRanged(
-                keys=["img", "prior", "label"],
-                a_min=-1000,
-                a_max=400,
-                b_min=0.0,
-                b_max=1.0,
-                clip=True,
-            )
-        ])
-        # 随机增强（不适合缓存）
-        tensord_augmentations = Compose([
-            # 转换为Tensor
-            ToTensord(keys=["img", "prior", "label"])
-        ])
-        val_transforms = Compose([
+        train_val_transforms = Compose([
             LoadImaged(keys=["img", "prior", "label"], reader=reader),
             EnsureChannelFirstd(keys=["img", "prior", "label"]),
             ScaleIntensityRanged(
@@ -137,10 +110,8 @@ class NnetTrainer:
                 b_max=1.0,
                 clip=True,
             ),
-            # 转换为Tensor
             ToTensord(keys=["img", "prior", "label"])
         ])
-
 
         """Setup data loaders."""
         print("Setting up datasets...")
@@ -149,81 +120,22 @@ class NnetTrainer:
         val_indices = DATASET_CONFIG['val_dataset_indices']
 
         print("train_indices:", train_indices)
-        train_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], train_indices)
+        train_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], self.fov_type, train_indices)
 
         print("val_indices:", val_indices)
-        val_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], val_indices)
+        val_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], self.fov_type, val_indices)
 
         print(f"train Dataset sizes:{len(train_dataset)}, validation Dataset sizes:{len(val_dataset)}")
 
         # 分割数据集并应用transforms
-        # self.train_dataset = Dataset(
-        #     data=train_dataset,
-        #     transform=train_val_transforms,
-        # )
-        # self.val_dataset = Dataset(
-        #     data=val_dataset,
-        #     transform=train_val_transforms,
-        # )
-        cache_dir_train = DATASET_CONFIG['LMDB_cache_dir_train']
-        cache_dir_val = DATASET_CONFIG['LMDB_cache_dir_val']
-        os.makedirs(cache_dir_train, exist_ok=True)
-        os.makedirs(cache_dir_val, exist_ok=True)
-        base_train_dataset = LMDBDataset(
+        self.train_dataset = Dataset(
             data=train_dataset,
-            transform=deterministic_transforms,  # 只缓存确定性变换
-            cache_dir=cache_dir_train,
-            lmdb_kwargs={
-                "map_size": DATASET_CONFIG['map_size_train'] * 1024 ** 3,
-                "readahead": True,  # HDD性能关键
-                "meminit": False,  # 加速初始化
-                "lock": False  # 多进程安全
-            },
-            progress=True,  # 显示进度条
-            pickle_protocol=5  # 高效序列化
+            transform=train_val_transforms,
         )
-        self.train_dataset = RandomAugment(tensord_augmentations)(base_train_dataset)
-
-        # 创建验证集 LMDBDataset
-        self.val_dataset = LMDBDataset(
+        self.val_dataset = Dataset(
             data=val_dataset,
-            transform=val_transforms,
-            cache_dir=cache_dir_val,  # 使用单独的验证集缓存目录
-            lmdb_kwargs={
-                "map_size": DATASET_CONFIG['map_size_val'] * 1024 ** 3,
-                "readahead": True,  # HDD优化
-                "meminit": False
-            },
-            progress=True,
-            pickle_protocol=5
+            transform=train_val_transforms,
         )
-        # self.train_dataset = CacheDataset(
-        #     data=train_dataset,
-        #     transform=train_val_transforms,
-        #     cache_rate=0.05,  # 将所有数据预处理后缓存到内存，训练时直接读取内存，速度最快，但内存占用高。
-        #     num_workers=4,
-        #     copy_cache=False,
-        #     progress=True
-        # )
-        # self.train_dataset = SmartCacheDataset(
-        #     data=train_dataset,
-        #     transform=train_val_transforms,
-        #     replace_rate=1,  # 每个 epoch 替换 10% 的缓存
-        #     cache_rate=0.06,  # 缓存 5% 的样本（按你可用内存调整）
-        #     num_init_workers=2,  # 初始化并行 worker
-        #     num_replace_workers=2,  # 替换时的后台并行 worker
-        #     shuffle=True,  # 打乱 data_list 再选 cache
-        #     progress=True,
-        #     copy_cache=False,
-        #     runtime_cache=False
-        # )
-        # self.val_dataset = CacheDataset(
-        #     data=val_dataset,
-        #     transform=train_val_transforms,
-        #     cache_rate=0.2,
-        #     num_workers=2,
-        #     progress=True
-        # )
 
         # MONAI优化后的DataLoader
         self.train_loader = ThreadDataLoader(
@@ -245,19 +157,6 @@ class NnetTrainer:
             prefetch_factor=4,
             persistent_workers=True,
         )
-
-    def free_memory(self):
-        """强制释放内存资源"""
-        # 强制Python垃圾回收
-        gc.collect()
-
-        # 清空CUDA缓存
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        # 报告内存状态
-        mem = psutil.virtual_memory()
-        print(f"内存释放后: 已用 {mem.used / 1e9:.1f}GB, 可用 {mem.available / 1e9:.1f}GB")
 
     def setup_model(self):
         """Setup model and move to device."""
@@ -285,17 +184,12 @@ class NnetTrainer:
         """Setup optimizer and loss function."""
         batches_per_epoch = len(self.train_loader)
         total_batches = TRAINING_CONFIG['epochs'] * batches_per_epoch
-        weight_mse = TRAINING_CONFIG['weight_mse']
-        weight_l1 = TRAINING_CONFIG['weight_l1']
-        weight_percep = TRAINING_CONFIG['weight_percep']
-        weight_ssim = TRAINING_CONFIG['weight_ssim']
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=SCHEDULER_CONFIG['lr']
         )
 
         # 根据配置选择学习率调度器
-
         if self.scheduler_type == 'StepLR':
             self.scheduler = optim.lr_scheduler.StepLR(
                 self.optimizer,
@@ -350,21 +244,10 @@ class NnetTrainer:
             )
 
         self.mse_loss = MSELoss().to(self.device)
-        self.L1_loss = L1Loss().to(self.device)
-        # 添加MONAI医学图像专用损失函数
-        self.ssim_loss = SSIMLoss(spatial_dims=2).to(self.device)
-        # 伪影去除专用损失
-        self.perceptual_loss = PerceptualLoss(spatial_dims=2, network_type="alex").to(self.device)
 
         # 组合损失函数
         def combined_loss(pred, target):
-            mse = self.mse_loss(pred, target)
-            # l1 = self.L1_loss(pred, target)
-            # ssim = self.ssim_loss(pred, target)
-            # percep = self.perceptual_loss(pred, target)
-            # loss_total = weight_mse * mse + weight_l1 * l1 + weight_percep * percep + weight_ssim * ssim
-            loss_total = mse
-            return loss_total
+            return self.mse_loss(pred, target)
 
         self.criterion = combined_loss
 
@@ -443,14 +326,6 @@ class NnetTrainer:
                         pred_det = prediction.detach()
                         lbl_det = labels.detach()
                         batch_metrics = self.calculate_metrics(pred_det, lbl_det)
-                        # detach and move to cpu
-                        # pred_cpu = prediction.detach().cpu()
-                        # lbl_cpu = labels.detach().cpu()
-                        # # convert to plain torch.Tensor (strip MetaTensor meta)
-                        # pred_plain = torch.from_numpy(pred_cpu.numpy())
-                        # lbl_plain = torch.from_numpy(lbl_cpu.numpy())
-                        # # compute metrics on plain tensors
-                        # batch_metrics = self.calculate_metrics(pred_plain, lbl_plain)
 
                     print(
                         f"[Epoch {epoch + 1} Batch {i + 1}] "
@@ -463,7 +338,7 @@ class NnetTrainer:
                         f"MSSSIM: {batch_metrics['msssim']:.6f}, "
                         f"CORR2: {batch_metrics['corr2']:.6f}"
                     )
-                    # Log to tensorboard,减轻 wandb 后端压力，减少本机缓存增长
+                    # Log to tensorboard
                     if self.tb_writer:
                         global_step = epoch * len(self.train_loader) + i
                         self.tb_writer.add_scalar('Train/Loss', batch_loss, global_step)
@@ -476,7 +351,7 @@ class NnetTrainer:
                         self.tb_writer.add_scalar('Learning_Rate', self.optimizer.param_groups[0]['lr'], global_step)
                         self.tb_writer.add_scalar('Epoch', epoch + 1, global_step)
 
-                    # Log to wandb,减轻 wandb 后端压力，减少本机缓存增长
+                    # Log to wandb
                     if self.use_wandb:
                         wandb.log({
                             'train_loss': batch_loss,
@@ -616,15 +491,12 @@ class NnetTrainer:
             self.train_epoch(epoch)
             # Validation
             self.validate_epoch(epoch)
-            #把准备好data的替换项交换进缓存
-            # self.train_dataset.update_cache()
             # 强制内存释放
-            self.free_memory()
+            free_memory()
             # 学习率调度器更新
             if self.scheduler_type in ['StepLR', 'ReduceLROnPlateau']:
                 self.scheduler.step()
-        #stop background workers
-        # self.train_dataset.shutdown()
+
         self.cleanup()
 
     def cleanup(self):
@@ -704,7 +576,7 @@ def main():
 
     # 创建实验目录
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_dir = os.path.join("experiments", "Nnet", f"{timestamp}")
+    experiment_dir = os.path.join("experiments", "Nnet", DATASET_CONFIG['fov_type'], f"{timestamp}")
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"Created experiment directory: {experiment_dir}")
 

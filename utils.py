@@ -8,6 +8,8 @@ from typing import List, Tuple, Dict
 import torch
 import math
 from pytorch_msssim import ssim
+import psutil
+import gc
 
 
 def get_dataset_slice_counts(data_root: str, indices: List[int]) -> Tuple[
@@ -118,3 +120,12 @@ def calculate_metrics(prediction: torch.Tensor, target: torch.Tensor) -> Dict[st
             'psnr': psnr,
             'ssim': ssim_val
         }
+
+def free_memory():
+    """强制释放内存资源"""
+    # 强制Python垃圾回收
+    gc.collect()
+
+    # 报告内存状态
+    mem = psutil.virtual_memory()
+    print(f"内存释放后: 已用 {mem.used / 1e9:.1f}GB, 可用 {mem.available / 1e9:.1f}GB")

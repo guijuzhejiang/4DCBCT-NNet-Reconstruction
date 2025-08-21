@@ -18,11 +18,13 @@ TRAINING_CONFIG = {
 
 # Dataset configuration
 DATASET_CONFIG = {
-    'data_root': '/media/zzg/GJ_disk01/data/Medical/4D_Lung_CBCT_Hitachi/dataset',
+    # 'data_root': '/media/zzg/GJ_disk01/data/Medical/4D_Lung_CBCT_Hitachi/dataset',
+    'data_root': '/home/zzg/data/Medical/4D_Lung_CBCT_Hitachi/dataset/',
     'LMDB_cache_dir_train': '/media/zzg/GJ_disk02/data/Medical/4D_Lung_CBCT_Hitachi/LMDB_cache_dir_train',
     'LMDB_cache_dir_val': '/media/zzg/GJ_disk02/data/Medical/4D_Lung_CBCT_Hitachi/LMDB_cache_dir_val',
-    'map_size_train': 500,        # 500GB空间预留
+    'map_size_train': 1000,        # 500GB空间预留
     'map_size_val': 100,          # 100GB空间预留
+    'fov_type': 'FovL',            #"FovL", "FovS_180", "FovS_360"
     'train_dataset_indices': list(range(0, 40)),
     # 'train_dataset_indices': [0],
     'val_dataset_indices': list(range(40, 45)),
@@ -50,7 +52,7 @@ LOGGING_CONFIG = {
 
 # Learning rate scheduler
 SCHEDULER_CONFIG = {
-    'type': 'StepLR',
+    'type': 'CyclicLR',
     'step_size': 1,     #default 5
     'gamma': 0.90,
     'lr': 1e-5,
@@ -65,7 +67,7 @@ SCHEDULER_CONFIG = {
     # OneCycleLR 参数
     'pct_start': 0.3,
     # CyclicLR 参数,代表半循环的epoch数
-    'epoch_size_up': 0.5,
+    'epoch_size_up': 1,
     'mode': 'triangular',
 }
 

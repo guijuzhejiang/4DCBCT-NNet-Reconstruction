@@ -28,22 +28,12 @@ from monai.transforms import (
     Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, RandHistogramShiftd, RandBiasFieldd, RandGaussianNoised,
     RandGaussianSmoothd, RandCoarseDropoutd, RandAffined, RandAdjustContrastd, ToTensord
 )
-from monai.data import CacheDataset, ThreadDataLoader, LMDBDataset
+from monai.data import Dataset, CacheDataset, ThreadDataLoader, SmartCacheDataset, PersistentDataset, LMDBDataset
 from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric, MultiScaleSSIMMetric
 from datetime import datetime
 import wandb
 from img_reader import CustomIMGReader
-import psutil
-import gc
-from monai.transforms import MapTransform
-
-
-class RandomAugment(MapTransform):
-    def __init__(self, augmentations):
-        self.augment = augmentations
-
-    def __call__(self, data):
-        return self.augment(data)
+from utils import free_memory
 
 
 class NnetTrainer:
@@ -54,6 +44,7 @@ class NnetTrainer:
         self.device = setup_device(DEVICE_CONFIG['use_cuda'], DEVICE_CONFIG['cuda_device'])
         self.scheduler_type = SCHEDULER_CONFIG.get('type', 'StepLR')
         print(f"Using {self.scheduler_type} learning rate scheduler")
+        self.fov_type = DATASET_CONFIG.get('fov_type', 'FovL')
         # 初始化指标计算器
         self.ssim_metric = SSIMMetric(spatial_dims=2, reduction="mean")
         self.msssim_metric = MultiScaleSSIMMetric(spatial_dims=2, data_range=1.0, reduction="mean") #因为图像归一化到 [0,1]
@@ -109,8 +100,8 @@ class NnetTrainer:
     def setup_data(self):
         # 创建reader
         reader = CustomIMGReader(image_shape=(1, 512, 512), dtype=np.int16, output_dtype=float)
-        # 确定性变换（适合缓存）
-        deterministic_transforms = Compose([
+        # 随机增强（不适合缓存）
+        train_transforms = Compose([
             LoadImaged(keys=["img", "prior", "label"], reader=reader),
             EnsureChannelFirstd(keys=["img", "prior", "label"]),
             ScaleIntensityRanged(
@@ -120,10 +111,7 @@ class NnetTrainer:
                 b_min=0.0,
                 b_max=1.0,
                 clip=True,
-            )
-        ])
-        # 随机增强（不适合缓存）
-        random_augmentations = Compose([
+            ),
             # 运动伪影相关增强
             RandAffined(
                 keys=["img", "prior", "label"],
@@ -154,8 +142,6 @@ class NnetTrainer:
             # 转换为Tensor
             ToTensord(keys=["img", "prior", "label"])
         ])
-
-        # 验证集transforms - 仅基础转换
         val_transforms = Compose([
             LoadImaged(keys=["img", "prior", "label"], reader=reader),
             EnsureChannelFirstd(keys=["img", "prior", "label"]),
@@ -177,46 +163,21 @@ class NnetTrainer:
         val_indices = DATASET_CONFIG['val_dataset_indices']
 
         print("train_indices:", train_indices)
-        train_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], train_indices)
+        train_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], self.fov_type, train_indices)
 
         print("val_indices:", val_indices)
-        val_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], val_indices)
+        val_dataset = Nnet_Dataset(DATASET_CONFIG['data_root'], self.fov_type, val_indices)
 
         print(f"train Dataset sizes:{len(train_dataset)}, validation Dataset sizes:{len(val_dataset)}")
 
-        cache_dir_train = DATASET_CONFIG['LMDB_cache_dir_train']
-        cache_dir_val = DATASET_CONFIG['LMDB_cache_dir_val']
-        os.makedirs(cache_dir_train, exist_ok=True)
-        os.makedirs(cache_dir_val, exist_ok=True)
-
-        # 训练集LMDBDataset（仅缓存确定性变换）
-        base_train_dataset = LMDBDataset(
+        # 分割数据集并应用transforms
+        self.train_dataset = Dataset(
             data=train_dataset,
-            transform=deterministic_transforms,
-            cache_dir=cache_dir_train,
-            lmdb_kwargs={
-                "map_size": DATASET_CONFIG['map_size_train'] * 1024 ** 3,
-                "readahead": True,  # HDD性能关键
-                "meminit": False,  # 加速初始化
-                "lock": False  # 多进程安全
-            },
-            progress=True,  # 显示进度条
-            pickle_protocol=5  # 高效序列化
+            transform=train_transforms,
         )
-        self.train_dataset = RandomAugment(random_augmentations)(base_train_dataset)
-
-        # ========== 验证集 ==========
-        self.val_dataset = LMDBDataset(
+        self.val_dataset = Dataset(
             data=val_dataset,
             transform=val_transforms,
-            cache_dir=cache_dir_val,
-            lmdb_kwargs={
-                "map_size": DATASET_CONFIG['map_size_val'] * 1024 ** 3,
-                "readahead": True,  # HDD优化
-                "meminit": False
-            },
-            progress=True,
-            pickle_protocol=5
         )
 
         # MONAI优化后的DataLoader
@@ -228,7 +189,7 @@ class NnetTrainer:
             drop_last=False,
             pin_memory=torch.cuda.is_available(),
             prefetch_factor=4,
-            persistent_workers=True
+            persistent_workers=True,
         )
 
         self.val_loader = ThreadDataLoader(
@@ -237,21 +198,8 @@ class NnetTrainer:
             num_workers=TRAINING_CONFIG['num_workers'],
             pin_memory=torch.cuda.is_available(),
             prefetch_factor=4,
-            persistent_workers=True
+            persistent_workers=True,
         )
-
-    def free_memory(self):
-        """强制释放内存资源"""
-        # 强制Python垃圾回收
-        gc.collect()
-
-        # 清空CUDA缓存
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        # 报告内存状态
-        mem = psutil.virtual_memory()
-        print(f"内存释放后: 已用 {mem.used / 1e9:.1f}GB, 可用 {mem.available / 1e9:.1f}GB")
 
     def setup_model(self):
         """Setup model and move to device."""
@@ -603,7 +551,7 @@ class NnetTrainer:
             # Validation
             self.validate_epoch(epoch)
             # 强制内存释放
-            self.free_memory()
+            free_memory()
             # 学习率调度器更新
             if self.scheduler_type in ['StepLR', 'ReduceLROnPlateau']:
                 self.scheduler.step()
@@ -687,7 +635,7 @@ def main():
 
     # 创建实验目录
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_dir = os.path.join("experiments", "Nnet", f"{timestamp}")
+    experiment_dir = os.path.join("experiments", "Nnet", DATASET_CONFIG['fov_type'], f"{timestamp}")
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"Created experiment directory: {experiment_dir}")
 
