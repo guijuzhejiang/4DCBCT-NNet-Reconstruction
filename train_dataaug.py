@@ -28,7 +28,7 @@ from monai.transforms import (
     Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, RandHistogramShiftd, RandBiasFieldd, RandGaussianNoised,
     RandGaussianSmoothd, RandCoarseDropoutd, RandAffined, RandAdjustContrastd, ToTensord
 )
-from monai.data import Dataset, CacheDataset, ThreadDataLoader, SmartCacheDataset, PersistentDataset, LMDBDataset
+from monai.data import Dataset, CacheDataset, ThreadDataLoader, SmartCacheDataset, PersistentDataset, LMDBDataset, DataLoader
 from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric, MultiScaleSSIMMetric
 from datetime import datetime
 import wandb
@@ -181,25 +181,43 @@ class NnetTrainer:
         )
 
         # MONAI优化后的DataLoader
-        self.train_loader = ThreadDataLoader(
+        self.train_loader = DataLoader(
             self.train_dataset,
             batch_size=TRAINING_CONFIG['train_batch_size'],
             shuffle=True,
             num_workers=TRAINING_CONFIG['num_workers'],
             drop_last=False,
             pin_memory=torch.cuda.is_available(),
-            prefetch_factor=4,
-            persistent_workers=True,
+            prefetch_factor=2,
+            persistent_workers=False,
         )
-
-        self.val_loader = ThreadDataLoader(
+        self.val_loader = DataLoader(
             self.val_dataset,
             batch_size=TRAINING_CONFIG['val_batch_size'],
             num_workers=TRAINING_CONFIG['num_workers'],
             pin_memory=torch.cuda.is_available(),
-            prefetch_factor=4,
-            persistent_workers=True,
+            prefetch_factor=2,
+            persistent_workers=False,
         )
+        # self.train_loader = ThreadDataLoader(
+        #     self.train_dataset,
+        #     batch_size=TRAINING_CONFIG['train_batch_size'],
+        #     shuffle=True,
+        #     num_workers=TRAINING_CONFIG['num_workers'],
+        #     drop_last=False,
+        #     pin_memory=torch.cuda.is_available(),
+        #     prefetch_factor=2,
+        #     persistent_workers=False,
+        # )
+        #
+        # self.val_loader = ThreadDataLoader(
+        #     self.val_dataset,
+        #     batch_size=TRAINING_CONFIG['val_batch_size'],
+        #     num_workers=TRAINING_CONFIG['num_workers'],
+        #     pin_memory=torch.cuda.is_available(),
+        #     prefetch_factor=2,
+        #     persistent_workers=False,
+        # )
 
     def setup_model(self):
         """Setup model and move to device."""
@@ -548,6 +566,8 @@ class NnetTrainer:
             print("-" * 50)
             # Training
             self.train_epoch(epoch)
+            # 强制内存释放
+            free_memory()
             # Validation
             self.validate_epoch(epoch)
             # 强制内存释放

@@ -6,7 +6,7 @@ Configuration file for N-net training
 TRAINING_CONFIG = {
     'train_batch_size': 48, #48
     'val_batch_size': 48,
-    'num_workers': 8,
+    'num_workers': 1,
     'epochs': 50,
     'model_save_dir': './trained_model',
     'weight_l1': 0.1,

@@ -126,6 +126,10 @@ def free_memory():
     # 强制Python垃圾回收
     gc.collect()
 
+    # 清空CUDA缓存
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     # 报告内存状态
     mem = psutil.virtual_memory()
     print(f"内存释放后: 已用 {mem.used / 1e9:.1f}GB, 可用 {mem.available / 1e9:.1f}GB")

@@ -1,46 +1,9 @@
 import os
 import glob
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
-from tqdm import tqdm
-from scipy import stats
 import imageio
 from config import DATASET_CONFIG
-
-
-sns.set(font='DejaVu Sans')
-# 设置全局字体
-plt.rcParams['font.family'] = 'DejaVu Sans'
-plt.rcParams['axes.unicode_minus'] = False  # 正确显示负号
-
-# 设置参数
-DATA_ROOT = DATASET_CONFIG['data_root']
-FOVS = ["FovL", "FovS_180", "FovS_360"]
-SAMPLE_SIZE = 500  # 分析的样本数量
-OUTPUT_DIR = "./eda_results"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-# 初始化结果存储
-results = {
-    "subject": [],
-    "phase": [],
-    "slice": [],
-    "file_path": [],
-    "min_value": [],
-    "max_value": [],
-    "mean_value": [],
-    "std_value": [],
-    "kurtosis": [],
-    "skewness": [],
-    "file_size": [],
-    "image_shape": [],
-    "unique_values": [],
-    "is_constant": [],
-    "air_percentage": [],
-    "bone_percentage": []
-}
 
 
 def load_ct_slice(file_path):
@@ -54,401 +17,436 @@ def load_ct_slice(file_path):
         return None
 
 
-def analyze_slice(file_path, subject, phase, slice_idx):
-    """分析单个CT切片"""
-    # 加载图像
-    img = load_ct_slice(file_path)
-    if img is None:
-        return
+def find_common_subjects_and_slices(data_root, fovs):
+    """找到在所有FOV中都存在的受试者和切片"""
+    common_data = {}
 
-    # 基本统计
-    min_val = np.min(img)
-    max_val = np.max(img)
-    mean_val = np.mean(img)
-    std_val = np.std(img)
+    for fov in fovs:
+        fov_path = os.path.join(data_root, fov)
+        if not os.path.exists(fov_path):
+            continue
 
-    # 高级统计
-    kurtosis = stats.kurtosis(img.flatten())
-    skewness = stats.skew(img.flatten())
-
-    # 文件信息
-    file_size = os.path.getsize(file_path)
-
-    # 数据质量检查
-    unique_vals = len(np.unique(img))
-    is_constant = unique_vals == 1
-
-    # 组织分类
-    air_mask = img < -500
-    bone_mask = img > 300
-    air_percentage = np.mean(air_mask) * 100
-    bone_percentage = np.mean(bone_mask) * 100
-
-    # 保存结果
-    results["subject"].append(subject)
-    results["phase"].append(phase)
-    results["slice"].append(slice_idx)
-    results["file_path"].append(file_path)
-    results["min_value"].append(min_val)
-    results["max_value"].append(max_val)
-    results["mean_value"].append(mean_val)
-    results["std_value"].append(std_val)
-    results["kurtosis"].append(kurtosis)
-    results["skewness"].append(skewness)
-    results["file_size"].append(file_size)
-    results["image_shape"].append(img.shape)
-    results["unique_values"].append(unique_vals)
-    results["is_constant"].append(is_constant)
-    results["air_percentage"].append(air_percentage)
-    results["bone_percentage"].append(bone_percentage)
-
-    return img
-
-
-def collect_sample_paths():
-    """收集要分析的样本路径"""
-    sample_paths = []
-
-    for fov in FOVS:
-        fov_path = os.path.join(DATA_ROOT, fov)
         subjects = [d for d in os.listdir(fov_path)
                     if os.path.isdir(os.path.join(fov_path, d)) and d.startswith("subject_")]
 
-        for subject in subjects[:3]:  # 每个FOV分析3个受试者
+        for subject in subjects:
             subject_path = os.path.join(fov_path, subject)
 
-            # 获取所有相位的图像
+            # 处理prior文件夹（在subject级别）
+            prior_path = os.path.join(subject_path, "prior")
+            if os.path.exists(prior_path):
+                img_files = sorted(glob.glob(os.path.join(prior_path, "*.img")))
+                key = (subject, "prior", "prior")  # 使用特殊的key标识prior
+                if key not in common_data:
+                    common_data[key] = {}
+                common_data[key][fov] = img_files
+
+            # 处理各个phase下的img和gt文件夹
             for phase in [f"phase_{i:02d}" for i in range(5)]:
-                phase_path = os.path.join(subject_path, phase, "img")
+                phase_path = os.path.join(subject_path, phase)
 
-                if os.path.exists(phase_path):
-                    img_files = sorted(glob.glob(os.path.join(phase_path, "*.img")))
+                for img_type in ["img", "gt"]:
+                    img_path = os.path.join(phase_path, img_type)
+                    if os.path.exists(img_path):
+                        img_files = sorted(glob.glob(os.path.join(img_path, "*.img")))
 
-                    # 从每个相位中选择10个切片
-                    for slice_idx, file_path in enumerate(img_files[:10]):
-                        sample_paths.append({
-                            "file_path": file_path,
-                            "subject": subject,
-                            "phase": phase,
-                            "slice_idx": slice_idx
-                        })
+                        key = (subject, phase, img_type)
+                        if key not in common_data:
+                            common_data[key] = {}
+                        common_data[key][fov] = img_files
 
-                        if len(sample_paths) >= SAMPLE_SIZE:
-                            return sample_paths
-
-    return sample_paths
+    return common_data
 
 
-def perform_eda():
-    """执行完整的EDA分析"""
-    print("Start EDA analysis of 4D CBCT dataset...")
-    print(f"Number of analyzed samples: {SAMPLE_SIZE}")
+def visualize_slice_depth_progression(data_root, output_dir, fovs=["FovL", "FovS_180", "FovS_360"]):
+    """
+    可视化3: 切片深度进展
+    固定: subject, phase, image_type
+    变化: FOV (行), slice_position (列)
+    """
+    print("生成切片深度进展矩阵图...")
 
-    # 收集样本路径
-    sample_paths = collect_sample_paths()
-    print(f"{len(sample_paths)} sample paths collected")
+    common_data = find_common_subjects_and_slices(data_root, fovs)
 
-    # 分析每个切片
-    all_images = []
-    for sample in tqdm(sample_paths, desc="Analyze CT slices"):
-        img = analyze_slice(
-            sample["file_path"],
-            sample["subject"],
-            sample["phase"],
-            sample["slice_idx"]
-        )
-        if img is not None:
-            all_images.append(img)
+    # 选择合适的样本
+    selected_sample = None
+    for (subject, phase, img_type), fov_data in common_data.items():
+        if len(fov_data) == len(fovs) and phase == "phase_02" and img_type == "img":
+            min_slices = min(len(files) for files in fov_data.values())
+            if min_slices > 200:
+                selected_sample = (subject, phase, img_type, min_slices)
+                break
 
-    # 创建数据框
-    df = pd.DataFrame(results)
-    df.to_csv(os.path.join(OUTPUT_DIR, "ct_slice_stats.csv"), index=False)
-    print(f"The statistical results have been saved to {OUTPUT_DIR}/ct_slice_stats.csv")
+    if not selected_sample:
+        print("未找到合适的样本进行切片深度分析")
+        return
 
-    return df, all_images
+    subject, phase, img_type, num_slices = selected_sample
 
+    # 选择不同深度的切片（从头到尾均匀分布）
+    slice_indices = np.linspace(0, num_slices - 1, 8, dtype=int)
 
-def generate_visualizations(df, all_images):
-    """生成数据可视化"""
-    print("Generate visualization results...")
+    fig, axes = plt.subplots(len(fovs), len(slice_indices), figsize=(24, 9))
+    fig.suptitle(f"Slice Depth Progression\n{subject} - {phase} - {img_type}", fontsize=16)
 
-    # 1. 基本统计分布
-    plt.figure(figsize=(15, 10))
-
-    #最小值分布
-    plt.subplot(2, 3, 1)
-    sns.histplot(df["min_value"], kde=True, bins=30)
-    plt.title("Min Value distribution")
-    plt.xlabel("HU")
-    #最大值分布
-    plt.subplot(2, 3, 2)
-    sns.histplot(df["max_value"], kde=True, bins=30)
-    plt.title("Max Value distribution")
-    plt.xlabel("HU")
-    #均值分布
-    plt.subplot(2, 3, 3)
-    sns.histplot(df["mean_value"], kde=True, bins=30)
-    plt.title("Mean Value distribution")
-    plt.xlabel("HU")
-    #标准差分布
-    plt.subplot(2, 3, 4)
-    sns.histplot(df["std_value"], kde=True, bins=30)
-    plt.title("Standard Deviation Distribution")
-    plt.xlabel("HU")
-    #空气区域百分比分布
-    plt.subplot(2, 3, 5)
-    sns.histplot(df["air_percentage"], kde=True, bins=30)
-    plt.title("Air Region Percentage Distribution")
-    plt.xlabel("%Percentage (%)")
-    #骨骼区域百分比分布
-    plt.subplot(2, 3, 6)
-    sns.histplot(df["bone_percentage"], kde=True, bins=30)
-    plt.title("Bone Region Percentage Distribution")
-    plt.xlabel("Percentage (%)")
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, "basic_stats_distribution.png"))
-    plt.close()
-
-    # 2. 不同相位的比较
-    plt.figure(figsize=(14, 10))
-
-    # 子图1: 不同相位的平均HU值
-    ax1 = plt.subplot(2, 2, 1)
-    sns.boxplot(x="phase", y="mean_value", data=df, ax=ax1)
-    ax1.set_title("Mean HU Value by Respiratory Phase")
-    ax1.set_ylabel("Mean HU Value")
-    ax1.set_xlabel("Respiratory Phase")
-
-    # 子图2: 不同相位的HU值标准差
-    ax2 = plt.subplot(2, 2, 2)
-    sns.boxplot(x="phase", y="std_value", data=df, ax=ax2)
-    ax2.set_title("HU Standard Deviation by Respiratory Phase")
-    ax2.set_ylabel("Standard Deviation")
-    ax2.set_xlabel("Respiratory Phase")
-
-    # 子图3: 不同相位的空气区域百分比
-    ax3 = plt.subplot(2, 2, 3)
-    sns.boxplot(x="phase", y="air_percentage", data=df, ax=ax3)
-    ax3.set_title("Air Region Percentage by Respiratory Phase")
-    ax3.set_ylabel("Air Percentage (%)")
-    ax3.set_xlabel("Respiratory Phase")
-
-    # 子图4: 不同相位的骨骼区域百分比
-    ax4 = plt.subplot(2, 2, 4)
-    sns.boxplot(x="phase", y="bone_percentage", data=df, ax=ax4)
-    ax4.set_title("Bone Region Percentage by Respiratory Phase")
-    ax4.set_ylabel("Bone Percentage (%)")
-    ax4.set_xlabel("Respiratory Phase")
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, "phase_comparison.png"))
-    plt.close()
-
-    # 3. HU值分布直方图
-    plt.figure(figsize=(10, 6))
-    all_hu = np.concatenate([img.flatten() for img in all_images])
-    # 过滤极端值以更好地可视化
-    filtered_hu = all_hu[(all_hu >= -1000) & (all_hu <= 1000)]
-    sns.histplot(filtered_hu, bins=100, kde=True)
-    plt.axvline(-1000, color='r', linestyle='--', label='Air')
-    plt.axvline(-500, color='g', linestyle='--', label='Lung Tissue')
-    plt.axvline(0, color='b', linestyle='--', label='Water')
-    plt.axvline(300, color='purple', linestyle='--', label='Bone')
-    plt.title("Overall HU Value Distribution")
-    plt.xlabel("HU")
-    plt.ylabel("Frequency")
-    plt.legend()
-    plt.savefig(os.path.join(OUTPUT_DIR, "hu_distribution.png"))
-    plt.close()
-
-    # 4. 样本图像展示
-    fig, axes = plt.subplots(3, 4, figsize=(20, 15))
-    fig.suptitle("CT Images with Different Windowing Settings", fontsize=20)
-
-    sample_indices = np.random.choice(len(all_images), 3, replace=False)
-    windows = [
-        ("Lung Window", -600, 1500),
-        ("Mediastinal Window", 40, 400),
-        ("Bone Window", 400, 2000),
-        ("Full Range", None, None)
-    ]
-
-    for i, idx in enumerate(sample_indices):
-        img = all_images[idx]
-
-        for j, (title, level, width) in enumerate(windows):
+    for i, fov in enumerate(fovs):
+        for j, slice_idx in enumerate(slice_indices):
             ax = axes[i, j]
 
-            if level is not None and width is not None:
-                vmin = level - width / 2
-                vmax = level + width / 2
-                display_img = np.clip(img, vmin, vmax)
-                ax.imshow(display_img, cmap='gray', vmin=vmin, vmax=vmax)
+            img_path = os.path.join(data_root, fov, subject, phase, img_type)
+            if os.path.exists(img_path):
+                img_files = sorted(glob.glob(os.path.join(img_path, "*.img")))
+                if slice_idx < len(img_files):
+                    img = load_ct_slice(img_files[slice_idx])
+                    if img is not None:
+                        ax.imshow(img, cmap='gray', vmin=-1000, vmax=1000)
+                        if i == 0:
+                            ax.set_title(f"Slice {slice_idx}")
+                    else:
+                        ax.text(0.5, 0.5, "Load Failed", ha='center', va='center', transform=ax.transAxes)
+                else:
+                    ax.text(0.5, 0.5, "No Data", ha='center', va='center', transform=ax.transAxes)
             else:
-                ax.imshow(img, cmap='gray')
+                ax.text(0.5, 0.5, "Path Not Found", ha='center', va='center', transform=ax.transAxes)
 
-            ax.set_title(f"{title}\nSample {idx}")
             ax.axis('off')
 
+            # 在第一列添加FOV标签
+            if j == 0:
+                ax.text(-0.1, 0.5, fov, rotation=90, ha='center', va='center',
+                        transform=ax.transAxes, fontsize=12, fontweight='bold')
+
     plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, "sample_images.png"))
+    plt.savefig(os.path.join(output_dir, "slice_depth_progression.png"), dpi=150, bbox_inches='tight')
     plt.close()
 
-    # 5. 呼吸相位动态变化
-    # 选择具有完整5个相位的受试者
-    subject_counts = df.groupby('subject')['phase'].nunique()
-    valid_subjects = subject_counts[subject_counts >= 5].index.tolist()
 
-    if valid_subjects:
-        subject = valid_subjects[0]
-        subject_df = df[df["subject"] == subject]
+def visualize_subject_comparison(data_root, output_dir):
+    """
+    可视化4: 不同受试者对比
+    固定: FOV, phase, image_type, slice_position
+    变化: subject
+    """
+    print("生成受试者对比矩阵图...")
 
-        # 选择一个切片位置（例如中间切片）
-        slice_counts = subject_df.groupby('slice')['phase'].nunique()
-        valid_slices = slice_counts[slice_counts >= 5].index.tolist()
+    # 找到在指定FOV中存在的所有受试者
+    fov = "FovL"  # 固定使用FovL
+    phase = "phase_02"
+    img_type = "img"
 
-        if valid_slices:
-            slice_idx = valid_slices[0]
-            subject_df = subject_df[subject_df["slice"] == slice_idx]
-
-            if len(subject_df) >= 5:
-                fig, axes = plt.subplots(1, 5, figsize=(20, 5))
-                fig.suptitle(f"Respiratory Phase Changes for Subject {subject}", fontsize=16)
-
-                # 按相位排序
-                subject_df = subject_df.sort_values('phase')
-
-                for i, (_, row) in enumerate(subject_df.iterrows()):
-                    if i >= 5:
-                        break
-
-                    img = load_ct_slice(row["file_path"])
-                    axes[i].imshow(img, cmap='gray', vmin=-600, vmax=400)
-                    axes[i].set_title(f"Phase: {row['phase']}")
-                    axes[i].axis('off')
-
-                plt.tight_layout()
-                plt.savefig(os.path.join(OUTPUT_DIR, "respiratory_phase_changes.png"))
-                plt.close()
-
-    # 6. 创建GIF展示呼吸运动
-    create_respiratory_gif(df)
-
-    print("All visualizations saved")
-
-
-def create_respiratory_gif(df):
-    """创建呼吸运动的GIF动画"""
-    print("Creating respiratory motion GIF...")
-
-    # 选择具有完整5个相位的受试者和切片
-    subject_counts = df.groupby('subject')['phase'].nunique()
-    valid_subjects = subject_counts[subject_counts >= 5].index.tolist()
-
-    if not valid_subjects:
-        print("No subjects with all 5 phases found for GIF creation")
+    fov_path = os.path.join(data_root, fov)
+    if not os.path.exists(fov_path):
+        print(f"FOV路径不存在: {fov_path}")
         return
 
-    subject = valid_subjects[0]
-    subject_df = df[df["subject"] == subject]
+    subjects = [d for d in os.listdir(fov_path)
+                if os.path.isdir(os.path.join(fov_path, d)) and d.startswith("subject_")][:6]  # 最多6个受试者
 
-    slice_counts = subject_df.groupby('slice')['phase'].nunique()
-    valid_slices = slice_counts[slice_counts >= 5].index.tolist()
-
-    if not valid_slices:
-        print(f"No valid slices found for subject {subject}")
+    if len(subjects) < 2:
+        print("可用受试者数量不足")
         return
 
-    slice_idx = valid_slices[0]
-    subject_df = subject_df[subject_df["slice"] == slice_idx]
+    # 创建2x3矩阵显示不同受试者
+    rows = 2
+    cols = 3
+    fig, axes = plt.subplots(rows, cols, figsize=(15, 10))
+    fig.suptitle(f"Subject Comparison\n{fov} - {phase} - {img_type} - Slice {slice_idx}", fontsize=16)
 
-    if len(subject_df) < 5:
-        print(f"Not enough phase data for slice {slice_idx} of subject {subject}")
+    axes_flat = axes.flatten() if len(subjects) > 1 else [axes]
+
+    for idx, subject in enumerate(subjects[:6]):
+        if idx >= len(axes_flat):
+            break
+
+        ax = axes_flat[idx]
+
+        img_path = os.path.join(data_root, fov, subject, phase, img_type)
+        if os.path.exists(img_path):
+            img_files = sorted(glob.glob(os.path.join(img_path, "*.img")))
+            if slice_idx < len(img_files):
+                img = load_ct_slice(img_files[slice_idx])
+                if img is not None:
+                    ax.imshow(img, cmap='gray', vmin=-1000, vmax=1000)
+                    ax.set_title(f"{subject}")
+                else:
+                    ax.text(0.5, 0.5, "Load Failed", ha='center', va='center', transform=ax.transAxes)
+            else:
+                ax.text(0.5, 0.5, "No Data", ha='center', va='center', transform=ax.transAxes)
+        else:
+            ax.text(0.5, 0.5, "Path Not Found", ha='center', va='center', transform=ax.transAxes)
+
+        ax.axis('off')
+
+    # 隐藏空的子图
+    for idx in range(len(subjects), len(axes_flat)):
+        axes_flat[idx].axis('off')
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "subject_comparison.png"), dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def visualize_image_type_comparison(data_root, output_dir, fovs=["FovL", "FovS_180", "FovS_360"]):
+    """
+    可视化5: 图像类型对比 (img vs prior vs gt)
+    固定: subject, phase, slice_position
+    变化: FOV (行), image_type (列) - 但添加prior列
+    """
+    print("生成图像类型对比矩阵...")
+
+    common_data = find_common_subjects_and_slices(data_root, fovs)
+
+    # 找到同时有img, gt和prior的样本
+    selected_sample = None
+    available_subjects = set()
+
+    # 首先收集有img和gt的受试者和相位
+    for (subject, phase, img_type), fov_data in common_data.items():
+        if img_type in ["img", "gt"] and len(fov_data) == len(fovs):
+            available_subjects.add((subject, phase))
+
+    # 然后检查这些受试者是否也有prior数据
+    for subject_phase in available_subjects:
+        subject, phase = subject_phase
+        prior_key = (subject, "prior", "prior")
+
+        if prior_key in common_data and len(common_data[prior_key]) == len(fovs):
+            # 检查img和gt是否也存在
+            img_key = (subject, phase, "img")
+            gt_key = (subject, phase, "gt")
+
+            if (img_key in common_data and len(common_data[img_key]) == len(fovs) and
+                    gt_key in common_data and len(common_data[gt_key]) == len(fovs)):
+                selected_sample = (subject, phase)
+                break
+
+    if not selected_sample:
+        print("未找到同时包含img, prior, gt的样本")
         return
 
-    # 按相位排序
-    subject_df = subject_df.sort_values('phase')
+    subject, phase = selected_sample
+    img_types = ["img", "prior", "gt"]
 
-    # 加载图像
-    images = []
-    for _, row in subject_df.iterrows():
-        img = load_ct_slice(row["file_path"])
-        if img is None:
-            continue
+    # 创建3x3矩阵 (3个FOV x 3个image_type)
+    fig, axes = plt.subplots(len(fovs), len(img_types), figsize=(15, 15))
+    fig.suptitle(f"Image Type Comparison\n{subject} - {phase} - Slice {slice_idx}", fontsize=16)
 
-        # 应用肺窗
-        windowed = np.clip(img, -1000, 400)  # 更宽的窗位以捕捉变化
-        normalized = (windowed - (-1000)) / 1400 * 255
-        images.append(normalized.astype(np.uint8))
+    for i, fov in enumerate(fovs):
+        for j, img_type in enumerate(img_types):
+            ax = axes[i, j]
 
-    # 保存为GIF
-    gif_path = os.path.join(OUTPUT_DIR, "respiratory_motion.gif")
-    imageio.mimsave(gif_path, images, duration=0.5)
-    print(f"Respiratory motion GIF saved to {gif_path}")
+            # 构建文件路径 - 根据img_type确定路径
+            if img_type == 'prior':
+                img_path = os.path.join(data_root, fov, subject, "prior")
+            else:
+                img_path = os.path.join(data_root, fov, subject, phase, img_type)
 
+            if os.path.exists(img_path):
+                img_files = sorted(glob.glob(os.path.join(img_path, "*.img")))
+                if slice_idx < len(img_files):
+                    img = load_ct_slice(img_files[slice_idx])
+                    if img is not None:
+                        # 根据图像类型调整显示参数
+                        if img_type == "prior":
+                            vmin, vmax = -1000, 1000
+                        else:
+                            vmin, vmax = -1000, 1000
 
-def generate_summary_report(df):
-    """生成EDA摘要报告"""
-    print("Generating EDA summary report...")
+                        ax.imshow(img, cmap='gray', vmin=vmin, vmax=vmax)
+                        if i == 0:
+                            ax.set_title(f"{img_type}")
+                    else:
+                        ax.text(0.5, 0.5, "Load Failed", ha='center', va='center', transform=ax.transAxes)
+                else:
+                    ax.text(0.5, 0.5, "No Data", ha='center', va='center', transform=ax.transAxes)
+            else:
+                ax.text(0.5, 0.5, "Path Not Found", ha='center', va='center', transform=ax.transAxes)
 
-    report = "# 4D CBCT Dataset EDA Analysis Report\n\n"
-    report += f"**Sample Size:** {len(df)}\n\n"
+            ax.axis('off')
 
-    # 基本统计
-    report += "## Basic Statistics\n"
-    report += f"- **Average HU Range:** {df['min_value'].mean():.1f} to {df['max_value'].mean():.1f}\n"
-    report += f"- **Overall Mean HU:** {df['mean_value'].mean():.1f} +/- {df['mean_value'].std():.1f}\n"
-    report += f"- **Overall HU Std Dev:** {df['std_value'].mean():.1f} +/- {df['std_value'].std():.1f}\n"
-    report += f"- **Air Region Percentage:** {df['air_percentage'].mean():.1f}% +/- {df['air_percentage'].std():.1f}%\n"
-    report += f"- **Bone Region Percentage:** {df['bone_percentage'].mean():.1f}% +/- {df['bone_percentage'].std():.1f}%\n\n"
+            # 在第一列添加FOV标签
+            if j == 0:
+                ax.text(-0.1, 0.5, fov, rotation=90, ha='center', va='center',
+                        transform=ax.transAxes, fontsize=12, fontweight='bold')
 
-    # 数据质量问题
-    constant_slices = df[df["is_constant"]]
-    report += "## Data Quality Issues\n"
-    report += f"- **Constant Value Slices:** {len(constant_slices)} ({len(constant_slices) / len(df) * 100:.2f}%)\n"
-
-    if not constant_slices.empty:
-        report += "  Examples of constant slices:\n"
-        for path in constant_slices["file_path"].head(3):
-            report += f"  - {path}\n"
-
-    # 文件大小分析
-    report += "\n## File Size Analysis\n"
-    report += f"- **Average File Size:** {df['file_size'].mean() / 1024:.1f} KB\n"
-    report += f"- **Min File Size:** {df['file_size'].min() / 1024:.1f} KB\n"
-    report += f"- **Max File Size:** {df['file_size'].max() / 1024:.1f} KB\n\n"
-
-    # 相位比较
-    phase_stats = df.groupby("phase").agg({
-        "mean_value": ["mean", "std"],
-        "std_value": ["mean", "std"],
-        "air_percentage": ["mean", "std"],
-    })
-    report += "## Statistical Comparison Across Respiratory Phases\n"
-    report += phase_stats.to_markdown() + "\n\n"
-
-    # 保存报告
-    report_path = os.path.join(OUTPUT_DIR, "eda_summary_report.md")
-    with open(report_path, "w") as f:
-        f.write(report)
-
-    print(f"Summary report saved to {report_path}")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "image_type_comparison.png"), dpi=150, bbox_inches='tight')
+    plt.close()
 
 
-def main():
-    """主函数"""
-    # 执行EDA分析
-    df, all_images = perform_eda()
+def create_respiratory_motion_gifs(data_root, output_dir, fovs=["FovL", "FovS_180", "FovS_360"]):
+    """
+    创建呼吸运动GIF动画 - 针对每个FOV
+    """
+    print("创建呼吸运动GIF动画...")
 
-    # 生成可视化
-    generate_visualizations(df, all_images)
+    common_data = find_common_subjects_and_slices(data_root, fovs)
 
-    # 生成摘要报告
-    generate_summary_report(df)
+    # 找到有完整相位数据的受试者
+    subject_phase_count = {}
+    for (subject, phase, img_type), fov_data in common_data.items():
+        if img_type == "img":
+            key = subject
+            if key not in subject_phase_count:
+                subject_phase_count[key] = set()
+            if len(fov_data) == len(fovs):
+                subject_phase_count[key].add(phase)
 
-    print("EDA分析完成！所有结果保存在", OUTPUT_DIR)
+    selected_subject = None
+    for subject, phases in subject_phase_count.items():
+        if len(phases) >= 5:
+            selected_subject = subject
+            break
+
+    if not selected_subject:
+        print("未找到有完整相位数据的受试者")
+        return
+
+    phases = [f"phase_{i:02d}" for i in range(5)]
+
+    # 为每个FOV创建GIF
+    for fov in fovs:
+        images = []
+
+        for phase in phases:
+            img_path = os.path.join(data_root, fov, selected_subject, phase, "img")
+            if os.path.exists(img_path):
+                img_files = sorted(glob.glob(os.path.join(img_path, "*.img")))
+                if slice_idx < len(img_files):
+                    img = load_ct_slice(img_files[slice_idx])
+                    if img is not None:
+                        # 标准化到0-255范围
+                        normalized = np.clip((img + 1000) / 2000 * 255, 0, 255)
+                        images.append(normalized.astype(np.uint8))
+
+        if len(images) >= 5:
+            # 添加反向播放以形成循环
+            images_cycle = images + images[-2:0:-1]
+
+            gif_path = os.path.join(output_dir, f"respiratory_motion_{fov}.gif")
+            imageio.mimsave(gif_path, images_cycle, duration=0.3)
+            print(f"呼吸运动GIF已保存: {gif_path}")
 
 
+def visualize_phase_with_prior_matrix(data_root, output_dir, fovs=["FovL", "FovS_180", "FovS_360"]):
+    """
+    可视化6: 呼吸相位与先验图像对比矩阵
+    固定: subject, image_type(img), slice_position
+    变化: FOV (行), phase + prior (列)
+    """
+    print("生成呼吸相位与先验图像对比矩阵...")
+
+    common_data = find_common_subjects_and_slices(data_root, fovs)
+
+    # 找到有完整相位数据和prior数据的受试者
+    subject_phase_count = {}
+    subjects_with_prior = set()
+
+    # 收集有complete phases的受试者
+    for (subject, phase, img_type), fov_data in common_data.items():
+        if img_type == "img" and len(fov_data) == len(fovs):
+            if subject not in subject_phase_count:
+                subject_phase_count[subject] = set()
+            subject_phase_count[subject].add(phase)
+
+    # 收集有prior数据的受试者
+    for (subject, phase_key, img_type), fov_data in common_data.items():
+        if phase_key == "prior" and img_type == "prior" and len(fov_data) == len(fovs):
+            subjects_with_prior.add(subject)
+
+    # 选择既有完整相位又有prior的受试者
+    selected_subject = None
+    for subject, phases in subject_phase_count.items():
+        if len(phases) >= 5 and subject in subjects_with_prior:
+            selected_subject = subject
+            break
+
+    if not selected_subject:
+        print("未找到有完整相位和prior数据的受试者")
+        return
+
+    phases = [f"phase_{i:02d}" for i in range(5)]
+    columns = phases + ["prior"]  # 5个phase + 1个prior
+
+    # 创建矩阵 (3个FOV x 6列)
+    fig, axes = plt.subplots(len(fovs), len(columns), figsize=(24, 12))
+    fig.suptitle(f"Respiratory Phases with Prior Reference\n{selected_subject} - img type - Slice {slice_idx}",
+                 fontsize=16)
+
+    for i, fov in enumerate(fovs):
+        for j, col_item in enumerate(columns):
+            ax = axes[i, j]
+
+            # 根据列项确定路径
+            if col_item == "prior":
+                img_path = os.path.join(data_root, fov, selected_subject, "prior")
+            else:  # col_item是phase
+                img_path = os.path.join(data_root, fov, selected_subject, col_item, "img")
+
+            if os.path.exists(img_path):
+                img_files = sorted(glob.glob(os.path.join(img_path, "*.img")))
+                if slice_idx < len(img_files):
+                    img = load_ct_slice(img_files[slice_idx])
+                    if img is not None:
+                        ax.imshow(img, cmap='gray', vmin=-1000, vmax=1000)
+                        if i == 0:  # 只在第一行显示列标题
+                            ax.set_title(f"{col_item}")
+                    else:
+                        ax.text(0.5, 0.5, "Load Failed", ha='center', va='center', transform=ax.transAxes)
+                else:
+                    ax.text(0.5, 0.5, "No Data", ha='center', va='center', transform=ax.transAxes)
+            else:
+                ax.text(0.5, 0.5, "Path Not Found", ha='center', va='center', transform=ax.transAxes)
+
+            ax.axis('off')
+
+            # 在第一列添加FOV标签
+            if j == 0:
+                ax.text(-0.1, 0.5, fov, rotation=90, ha='center', va='center',
+                        transform=ax.transAxes, fontsize=12, fontweight='bold')
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "phase_with_prior_matrix.png"), dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def generate_enhanced_visualizations(data_root, output_dir):
+    """
+    生成增强的可视化图表
+    """
+    print("开始生成增强的可视化图表...")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    fovs = ["FovL", "FovS_180", "FovS_360"]
+
+    try:
+        # 1. 切片深度进展
+        visualize_slice_depth_progression(data_root, output_dir, fovs)
+
+        # 2. 受试者对比
+        visualize_subject_comparison(data_root, output_dir, fovs)
+
+        # 3. 图像类型对比
+        visualize_image_type_comparison(data_root, output_dir, fovs)
+
+        # 4. 呼吸相位与先验图像对比矩阵
+        visualize_phase_with_prior_matrix(data_root, output_dir, fovs)
+
+        # 5. 创建呼吸运动GIF
+        create_respiratory_motion_gifs(data_root, output_dir, fovs)
+
+        print(f"所有增强可视化图表已保存到: {output_dir}")
+
+    except Exception as e:
+        print(f"生成可视化时出错: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+
+# 使用示例
 if __name__ == "__main__":
-    main()
+    DATA_ROOT = DATASET_CONFIG['data_root']
+    OUTPUT_DIR = "./enhanced_eda_results"
+    slice_idx = 100
+    generate_enhanced_visualizations(DATA_ROOT, OUTPUT_DIR)
