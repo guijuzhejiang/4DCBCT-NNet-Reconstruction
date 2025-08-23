@@ -185,25 +185,7 @@ class NnetTrainer:
         )
 
         # MONAI最適化DataLoader
-        # self.train_loader = DataLoader(
-        #     self.train_dataset,
-        #     batch_size=TRAINING_CONFIG['train_batch_size'],
-        #     shuffle=True,
-        #     num_workers=TRAINING_CONFIG['num_workers'],
-        #     drop_last=False,
-        #     pin_memory=torch.cuda.is_available(),
-        #     prefetch_factor=2,
-        #     persistent_workers=False,
-        # )
-        # self.val_loader = DataLoader(
-        #     self.val_dataset,
-        #     batch_size=TRAINING_CONFIG['val_batch_size'],
-        #     num_workers=TRAINING_CONFIG['num_workers'],
-        #     pin_memory=torch.cuda.is_available(),
-        #     prefetch_factor=2,
-        #     persistent_workers=False,
-        # )
-        self.train_loader = ThreadDataLoader(
+        self.train_loader = DataLoader(
             self.train_dataset,
             batch_size=TRAINING_CONFIG['train_batch_size'],
             shuffle=True,
@@ -213,8 +195,7 @@ class NnetTrainer:
             prefetch_factor=2,
             persistent_workers=False,
         )
-
-        self.val_loader = ThreadDataLoader(
+        self.val_loader = DataLoader(
             self.val_dataset,
             batch_size=TRAINING_CONFIG['val_batch_size'],
             num_workers=TRAINING_CONFIG['num_workers'],

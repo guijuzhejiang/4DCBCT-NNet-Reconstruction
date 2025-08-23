@@ -20,10 +20,6 @@ TRAINING_CONFIG = {
 DATASET_CONFIG = {
     # 'data_root': '/media/zzg/GJ_disk01/data/Medical/4D_Lung_CBCT_Hitachi/dataset',
     'data_root': '/home/zzg/data/Medical/4D_Lung_CBCT_Hitachi/dataset/',
-    'LMDB_cache_dir_train': '/media/zzg/GJ_disk02/data/Medical/4D_Lung_CBCT_Hitachi/LMDB_cache_dir_train',
-    'LMDB_cache_dir_val': '/media/zzg/GJ_disk02/data/Medical/4D_Lung_CBCT_Hitachi/LMDB_cache_dir_val',
-    'map_size_train': 1000,        # 500GB空間を確保
-    'map_size_val': 100,          # 100GB空間を確保
     'fov_type': 'FovS_180',            #"FovL", "FovS_180", "FovS_360"
     'train_dataset_indices': list(range(0, 40)),
     # 'train_dataset_indices': [0],
