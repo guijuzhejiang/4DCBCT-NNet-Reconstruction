@@ -6,7 +6,10 @@ from monai.utils import ensure_tuple
 
 class CustomIMGReader(ImageReader):
     """
-    自定义的IMG文件读取器，用于读取512x512的int16 HU值医疗图像
+    カスタムIMGファイルリーダー、512x512のint16 HU値医療画像を読み込むために使用
+    @param {tuple} image_shape - 画像の形状 (デフォルト: (1, 512, 512))
+    @param {np.dtype} dtype - 元の画像データのデータ型 (デフォルト: np.int16)
+    @param {type} output_dtype - 出力画像データのデータ型 (デフォルト: float)
     """
 
     def __init__(self,
@@ -22,7 +25,9 @@ class CustomIMGReader(ImageReader):
 
     def verify_suffix(self, filename: Union[Sequence[str], str]) -> bool:
         """
-        验证文件后缀是否为.img
+        ファイル拡張子が.imgであるか検証
+        @param {Union[Sequence[str], str]} filename - ファイル名またはファイル名のシーケンス
+        @returns {bool} - サフィックスが有効な場合はTrue、それ以外はFalse
         """
         filenames = ensure_tuple(filename)
         for name in filenames:
@@ -33,10 +38,13 @@ class CustomIMGReader(ImageReader):
         return True
 
     def read(self, data: Union[Sequence[str], str], **kwargs) -> Any:
-        """读取图像数据"""
+        """画像データを読み込む
+        @param {Union[Sequence[str], str]} data - 読み込むデータ（ファイルパスまたはパスのシーケンス）
+        @returns {Any} - 読み込まれた画像データ
+        """
         filenames = ensure_tuple(data)
         if len(filenames) > 1:
-            raise ValueError("一次只能读取一个文件")
+            raise ValueError("一度に複数のファイルを読み込むことはできません")
 
         with open(filenames[0], 'rb') as f:
             raw_data = np.fromfile(f, dtype=self.dtype)
@@ -44,23 +52,20 @@ class CustomIMGReader(ImageReader):
 
     def get_data(self, img: np.ndarray, **kwargs) -> Tuple[np.ndarray, Dict]:
         """
-        获取图像数据和元数据
+        画像データとメタデータを取得
 
-        Args:
-            img: read方法返回的图像数据
-
-        Returns:
-            (image_array, metadata_dict)
+        @param {np.ndarray} img - readメソッドによって返された画像データ
+        @returns {Tuple[np.ndarray, Dict]} - (画像配列, メタデータ辞書)
         """
 
-        # 创建元数据
+        # メタデータを作成
         metadata = {
             "spatial_shape": self.image_shape,
             'original_channel_dim': 0,
             'dtype': self.output_dtype.__name__,
             'filename_or_obj': kwargs.get('filename', 'custom_img'),
-            'affine': np.eye(4),  # 单位矩阵（无空间变换信息）
-            "original_affine": np.eye(4),  # MONAI需要此字段
+            'affine': np.eye(4),  # 単位行列（空間変換情報なし）
+            "original_affine": np.eye(4),  # MONAIで必要
         }
 
         return img, metadata

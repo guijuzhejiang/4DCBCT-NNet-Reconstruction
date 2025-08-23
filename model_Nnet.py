@@ -1,14 +1,28 @@
-## Nnet Architecture
+# Nnetアーキテクチャ
 
-import torch  ## the top-level pytorch package and tensor library
+import torch  # PyTorchのトップレベルパッケージとテンソルライブラリ
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-## Model Architecture
+# モデルアーキテクチャ
 class Nnet(nn.Module):
+    """
+    Nnetモデルの定義。エンコーダ・デコーダ構造とスキップ接続を持つ。
+    """
 
-    def ExtractionBlock(self, InChannel_1, OutChannel_1, Kernal_1, InChannel_2, OutChannel_2, Kernal_2):
+    def ExtractionBlock(self, InChannel_1: int, OutChannel_1: int, Kernal_1: int,
+                        InChannel_2: int, OutChannel_2: int, Kernal_2: int) -> nn.Sequential:
+        """
+        特徴抽出ブロックを構築する。
+        @param InChannel_1: 最初の畳み込み層の入力チャネル数
+        @param OutChannel_1: 最初の畳み込み層の出力チャネル数
+        @param Kernal_1: 最初の畳み込み層のカーネルサイズ
+        @param InChannel_2: 2番目の畳み込み層の入力チャネル数
+        @param OutChannel_2: 2番目の畳み込み層の出力チャネル数
+        @param Kernal_2: 2番目の畳み込み層のカーネルサイズ
+        @returns: nn.Sequentialブロック
+        """
         DownBlock = nn.Sequential(
             nn.Conv2d(InChannel_1, OutChannel_1, Kernal_1),
             nn.PReLU(),
@@ -17,7 +31,18 @@ class Nnet(nn.Module):
         )
         return DownBlock
 
-    def ExpansionBlock(self, InChannel1, OutChannel1, Kernel1, InChannel2, OutChannel2, Kernel2):
+    def ExpansionBlock(self, InChannel1: int, OutChannel1: int, Kernel1: int,
+                       InChannel2: int, OutChannel2: int, Kernel2: int) -> nn.Sequential:
+        """
+        特徴拡張ブロックを構築する。
+        @param InChannel1: 最初の転置畳み込み層の入力チャネル数
+        @param OutChannel1: 最初の転置畳み込み層の出力チャネル数
+        @param Kernel1: 最初の転置畳み込み層のカーネルサイズ
+        @param InChannel2: 2番目の転置畳み込み層の入力チャネル数
+        @param OutChannel2: 2番目の転置畳み込み層の出力チャネル数
+        @param Kernel2: 2番目の転置畳み込み層のカーネルサイズ
+        @returns: nn.Sequentialブロック
+        """
         UpBlock = nn.Sequential(
             nn.ConvTranspose2d(in_channels=InChannel1, out_channels=OutChannel1, kernel_size=Kernel1)
             , nn.PReLU()
@@ -26,8 +51,22 @@ class Nnet(nn.Module):
         )
         return UpBlock
 
-    def FinalConv(self, InChannel_1, OutChannel_1, Kernal_1, InChannel_2, OutChannel_2, Kernal_2, InChannel_3,
-                  OutChannel_3, Kernal_3):
+    def FinalConv(self, InChannel_1: int, OutChannel_1: int, Kernal_1: int,
+                  InChannel_2: int, OutChannel_2: int, Kernal_2: int,
+                  InChannel_3: int, OutChannel_3: int, Kernal_3: int) -> nn.Sequential:
+        """
+        最終畳み込み層を構築する。
+        @param InChannel_1: 最初の畳み込み層の入力チャネル数
+        @param OutChannel_1: 最初の畳み込み層の出力チャネル数
+        @param Kernal_1: 最初の畳み込み層のカーネルサイズ
+        @param InChannel_2: 2番目の畳み込み層の入力チャネル数
+        @param OutChannel_2: 2番目の畳み込み層の出力チャネル数
+        @param Kernal_2: 2番目の畳み込み層のカーネルサイズ
+        @param InChannel_3: 3番目の畳み込み層の入力チャネル数
+        @param OutChannel_3: 3番目の畳み込み層の出力チャネル数
+        @param Kernal_3: 3番目の畳み込み層のカーネルサイズ
+        @returns: nn.Sequentialブロック
+        """
         finalconv = nn.Sequential(
             nn.Conv2d(InChannel_1, OutChannel_1, Kernal_1, padding=0)
             , nn.PReLU()
@@ -39,9 +78,13 @@ class Nnet(nn.Module):
         return finalconv
 
     def __init__(self):
+        """
+        Nnetモデルを初期化する。
+        エンコーダとデコーダの各ブロックを定義する。
+        """
         super(Nnet, self).__init__()
 
-        ## Encode
+        # エンコードパス
         self.conv_encode1 = self.ExtractionBlock(1, 8, 5, 8, 8, 5)
         self.pool1 = nn.MaxPool2d(2)
         self.conv_encode2 = self.ExtractionBlock(8, 16, 3, 16, 16, 3)
@@ -58,7 +101,7 @@ class Nnet(nn.Module):
         self.pool7 = nn.MaxPool2d(2)
         self.conv_encode8 = self.ExtractionBlock(512, 512, 1, 512, 512, 1)
 
-        ## Decode
+        # デコードパス
         self.up1 = nn.Upsample(scale_factor=2, mode='nearest')
         self.Tconv1 = self.ExpansionBlock(1024, 512, 1, 512, 512, 3)
 
@@ -82,8 +125,14 @@ class Nnet(nn.Module):
 
         self.finalconv = self.FinalConv(16, 16, 1, 16, 8, 3, 8, 1, 1)
 
-    def forward(self, image, prior):
-        ## Encode
+    def forward(self, image: torch.Tensor, prior: torch.Tensor) -> torch.Tensor:
+        """
+        Nnetモデルのフォワードパス。
+        @param image: 入力画像テンソル
+        @param prior: 先行画像テンソル
+        @returns: 出力テンソル
+        """
+        # エンコードパス
         DownConv1 = self.conv_encode1(image)
         DownConv1_pool1 = self.pool1(DownConv1)
 
@@ -107,7 +156,7 @@ class Nnet(nn.Module):
 
         DownConv8 = self.conv_encode8(DownConv7_pool7)
 
-        ## Encode- Prior
+        # エンコードパス - 事前情報 (Prior)
         Prior_DownConv1 = self.conv_encode1(prior)
         PriorDownConv1_pool1 = self.pool1(Prior_DownConv1)
 
@@ -131,7 +180,7 @@ class Nnet(nn.Module):
 
         Prior_DownConv8 = self.conv_encode8(PriorDownConv7_pool7)
 
-        # Decode
+        # デコードパス
         temp = torch.cat((Prior_DownConv8, DownConv8), dim=1)
         up1 = self.up1(temp)
         temp = torch.cat((Prior_DownConv7, DownConv7), dim=1)

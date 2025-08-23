@@ -1,4 +1,4 @@
-## test XCAT female 512
+## XCAT female 512のテスト
 import numpy as np
 from PIL import Image
 from test_dataset_Nnet import Test_Dataset
@@ -17,7 +17,7 @@ model = Nnet()
 model.load_state_dict(torch.load(model_PATH, map_location='cuda:0'))
 model.to(device)
 model.eval()
-## set the save path
+## 保存パスを設定
 root_save = r'./prediction/Nnet/'
 
 
@@ -46,7 +46,7 @@ for i, batch in enumerate(test_dataloader, 0):
     png_dir = os.path.join(save_path, dir_list[-1].split('.')[0] + '.png')
     im.save(png_dir)
 
-print('Print the processed image by N-Net...')
+print('N-Netによる処理済み画像を出力します...')
 print(outputs[0][0][200][300])
 plt.subplot(1, 3, 1)
 plt.imshow(images[0][0].cpu().detach().numpy())

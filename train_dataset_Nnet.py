@@ -8,56 +8,56 @@ import glob
 
 class Nnet_Dataset(data.Dataset):
     """
-    适配4D CBCT Hitachi数据集的Dataset类
-    保留原始.img格式，支持保留HU值的训练
+    4D CBCT Hitachiデータセットに適合するDatasetクラス。
+    元の.img形式を保持し、HU値を保持した学習をサポート。
     """
 
     def __init__(self, root_data, fov_type, indices):
         """
-        初始化数据集
+        データセットを初期化する。
 
-        参数:
-        root_data: 图像根目录
-        HMIndex: 数据集索引列表
+        @param root_data: 画像ルートディレクトリ
+        @param fov_type: 視野タイプ (例: "FovL", "FovS_180")
+        @param indices: 処理するデータセットインデックスのリスト
         """
         self.samples = []
-        print(f"开始构建数据集，基础路径: {root_data}")
+        print(f"データセット構築を開始します。基本パス: {root_data}")
 
-        # 遍历所有FOV
+        # すべてのFOVを反復処理
         fov_path = os.path.join(root_data, fov_type)
 
-        # 遍历所有subject
+        # すべての被験者を反復処理
         subjects = [d for d in os.listdir(fov_path)
                     if os.path.isdir(os.path.join(fov_path, d)) and int(d.split("_")[1]) in indices]
         subjects.sort(key=lambda d: int(d.split("_")[1]))
-        print(f"{fov_type} subjects: {subjects}")
+        print(f"{fov_type} 被験者: {subjects}")
 
         for subject in subjects:
             subject_path = os.path.join(fov_path, subject)
 
-            # 获取先验图像路径 (所有相位共享)
+            # 先行画像パスを取得 (すべてのフェーズで共有)
             prior_dir = os.path.join(subject_path, "prior")
             prior_files = sorted(glob.glob(os.path.join(prior_dir, "*.img")))
 
-            # 遍历所有phase (00-04)
+            # すべてのフェーズ (00-04) を反復処理
             for phase in [f"phase_{i:02d}" for i in range(5)]:
                 phase_path = os.path.join(subject_path, phase)
 
-                # 检查img和gt目录是否存在
+                # imgおよびgtディレクトリが存在するかチェック
                 img_dir = os.path.join(phase_path, "img")
                 gt_dir = os.path.join(phase_path, "gt")
 
                 if os.path.exists(img_dir) and os.path.exists(gt_dir):
-                    # 获取该相位的所有图像和标签切片
+                    # このフェーズのすべての画像とラベルスライスを取得
                     img_files = sorted(glob.glob(os.path.join(img_dir, "*.img")))
                     label_files = sorted(glob.glob(os.path.join(gt_dir, "*.img")))
 
-                    # 确保文件数量匹配
+                    # ファイル数が一致することを確認
                     if len(img_files) != len(label_files) or len(img_files) != len(prior_files):
-                        print(f"警告: {fov_type}/{subject}/{phase} 文件数量不匹配")
+                        print(f"警告: {fov_type}/{subject}/{phase} ファイル数が一致しません")
                         continue
 
-                    # 为每个切片创建样本
+                    # 各スライスについてサンプルを作成
                     for i in range(len(img_files)):
                         self.samples.append({
                             "img": img_files[i],
@@ -65,14 +65,19 @@ class Nnet_Dataset(data.Dataset):
                             "label": label_files[i]
                         })
 
-        print(f"数据集构建完成，总样本数: {len(self.samples)}")
+        print(f"データセット構築が完了しました。総サンプル数: {len(self.samples)}")
         if len(self.samples) == 0:
-            raise RuntimeError("未找到任何有效样本，请检查数据路径和参数")
+            raise RuntimeError("有効なサンプルが見つかりませんでした。データパスとパラメータを確認してください")
 
     def __getitem__(self, index):
-        """返回样本字典（仅路径，实际加载在transform中完成）"""
+        """サンプル辞書を返す（パスのみ、実際の読み込みはtransformで完了）"
+        @param {int} index - サンプルのインデックス
+        @returns {dict} - サンプルを表す辞書
+        """
         return self.samples[index]
 
     def __len__(self):
-        """返回数据集大小"""
+        """データセットサイズを返す"
+        @returns {int} - データセット内のサンプル数
+        """
         return len(self.samples)

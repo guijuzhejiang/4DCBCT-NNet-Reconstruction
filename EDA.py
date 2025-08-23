@@ -7,18 +7,25 @@ from config import DATASET_CONFIG
 
 
 def load_ct_slice(file_path):
-    """加载CT切片并返回原始HU值数组"""
+    """CTスライスを読み込み、元のHU値配列を返す
+    @param {str} file_path - ファイルパス
+    @returns {np.ndarray | None} - HU値配列またはNone
+    """
     try:
         with open(file_path, 'rb') as f:
             raw_data = np.fromfile(f, dtype=np.int16)
         return raw_data.reshape(512, 512)
     except Exception as e:
-        print(f"加载失败: {file_path} - {str(e)}")
+        print(f"読み込み失敗: {file_path} - {str(e)}")
         return None
 
 
 def find_common_subjects_and_slices(data_root, fovs):
-    """找到在所有FOV中都存在的受试者和切片"""
+    """すべてのFOVで存在する被験者とスライスを検索
+    @param {str} data_root - データルートディレクトリ
+    @param {list} fovs - 視野（FOV）のリスト
+    @returns {dict} - 共通データの辞書
+    """
     common_data = {}
 
     for fov in fovs:
@@ -32,16 +39,16 @@ def find_common_subjects_and_slices(data_root, fovs):
         for subject in subjects:
             subject_path = os.path.join(fov_path, subject)
 
-            # 处理prior文件夹（在subject级别）
+            # priorフォルダを処理（subjectレベル）
             prior_path = os.path.join(subject_path, "prior")
             if os.path.exists(prior_path):
                 img_files = sorted(glob.glob(os.path.join(prior_path, "*.img")))
-                key = (subject, "prior", "prior")  # 使用特殊的key标识prior
+                key = (subject, "prior", "prior")  # priorを識別する特殊キー
                 if key not in common_data:
                     common_data[key] = {}
                 common_data[key][fov] = img_files
 
-            # 处理各个phase下的img和gt文件夹
+            # 各phase下のimgとgtフォルダを処理
             for phase in [f"phase_{i:02d}" for i in range(5)]:
                 phase_path = os.path.join(subject_path, phase)
 
@@ -60,15 +67,18 @@ def find_common_subjects_and_slices(data_root, fovs):
 
 def visualize_slice_depth_progression(data_root, output_dir, fovs=["FovL", "FovS_180", "FovS_360"]):
     """
-    可视化3: 切片深度进展
+    スライス深度進行の可視化
     固定: subject, phase, image_type
-    变化: FOV (行), slice_position (列)
+    変化: FOV (行), slice_position (列)
+    @param {str} data_root - データルートディレクトリ
+    @param {str} output_dir - 出力ディレクトリ
+    @param {list} fovs - 視野（FOV）のリスト
     """
-    print("生成切片深度进展矩阵图...")
+    print("スライス深度進行行列図を生成中...")
 
     common_data = find_common_subjects_and_slices(data_root, fovs)
 
-    # 选择合适的样本
+    # 適切なサンプルを選択
     selected_sample = None
     for (subject, phase, img_type), fov_data in common_data.items():
         if len(fov_data) == len(fovs) and phase == "phase_02" and img_type == "img":
@@ -78,12 +88,12 @@ def visualize_slice_depth_progression(data_root, output_dir, fovs=["FovL", "FovS
                 break
 
     if not selected_sample:
-        print("未找到合适的样本进行切片深度分析")
+        print("スライス深度分析に適したサンプルが見つかりませんでした")
         return
 
     subject, phase, img_type, num_slices = selected_sample
 
-    # 选择不同深度的切片（从头到尾均匀分布）
+    # 異なる深度のスライスを選択（最初から最後まで均等に分布）
     slice_indices = np.linspace(0, num_slices - 1, 8, dtype=int)
 
     fig, axes = plt.subplots(len(fovs), len(slice_indices), figsize=(24, 9))
@@ -103,15 +113,15 @@ def visualize_slice_depth_progression(data_root, output_dir, fovs=["FovL", "FovS
                         if i == 0:
                             ax.set_title(f"Slice {slice_idx}")
                     else:
-                        ax.text(0.5, 0.5, "Load Failed", ha='center', va='center', transform=ax.transAxes)
+                        ax.text(0.5, 0.5, "読み込み失敗", ha='center', va='center', transform=ax.transAxes)
                 else:
-                    ax.text(0.5, 0.5, "No Data", ha='center', va='center', transform=ax.transAxes)
+                    ax.text(0.5, 0.5, "データなし", ha='center', va='center', transform=ax.transAxes)
             else:
-                ax.text(0.5, 0.5, "Path Not Found", ha='center', va='center', transform=ax.transAxes)
+                ax.text(0.5, 0.5, "パスが見つかりません", ha='center', va='center', transform=ax.transAxes)
 
             ax.axis('off')
 
-            # 在第一列添加FOV标签
+            # 最初の列にFOVラベルを追加
             if j == 0:
                 ax.text(-0.1, 0.5, fov, rotation=90, ha='center', va='center',
                         transform=ax.transAxes, fontsize=12, fontweight='bold')
@@ -121,34 +131,38 @@ def visualize_slice_depth_progression(data_root, output_dir, fovs=["FovL", "FovS
     plt.close()
 
 
-def visualize_subject_comparison(data_root, output_dir):
+def visualize_subject_comparison(data_root, output_dir, fovs=["FovL", "FovS_180", "FovS_360"]):
     """
-    可视化4: 不同受试者对比
+    異なる被験者の比較の可視化
     固定: FOV, phase, image_type, slice_position
-    变化: subject
+    変化: subject
+    @param {str} data_root - データルートディレクトリ
+    @param {str} output_dir - 出力ディレクトリ
+    @param {list} fovs - 視野（FOV）のリスト
     """
-    print("生成受试者对比矩阵图...")
+    print("被験者比較行列図を生成中...")
 
-    # 找到在指定FOV中存在的所有受试者
-    fov = "FovL"  # 固定使用FovL
+    # 指定されたFOVに存在するすべての被験者を検索
+    fov = "FovL"  # FovLを固定で使用
     phase = "phase_02"
     img_type = "img"
 
     fov_path = os.path.join(data_root, fov)
     if not os.path.exists(fov_path):
-        print(f"FOV路径不存在: {fov_path}")
+        print(f"FOVパスが存在しません: {fov_path}")
         return
 
     subjects = [d for d in os.listdir(fov_path)
-                if os.path.isdir(os.path.join(fov_path, d)) and d.startswith("subject_")][:6]  # 最多6个受试者
+                if os.path.isdir(os.path.join(fov_path, d)) and d.startswith("subject_")][:6]  # 最大6人の被験者
 
     if len(subjects) < 2:
-        print("可用受试者数量不足")
+        print("利用可能な被験者数が不足しています")
         return
 
-    # 创建2x3矩阵显示不同受试者
+    # 異なる被験者を表示するために2x3の行列を作成
     rows = 2
     cols = 3
+
     fig, axes = plt.subplots(rows, cols, figsize=(15, 10))
     fig.suptitle(f"Subject Comparison\n{fov} - {phase} - {img_type} - Slice {slice_idx}", fontsize=16)
 
@@ -169,15 +183,15 @@ def visualize_subject_comparison(data_root, output_dir):
                     ax.imshow(img, cmap='gray', vmin=-1000, vmax=1000)
                     ax.set_title(f"{subject}")
                 else:
-                    ax.text(0.5, 0.5, "Load Failed", ha='center', va='center', transform=ax.transAxes)
+                    ax.text(0.5, 0.5, "読み込み失敗", ha='center', va='center', transform=ax.transAxes)
             else:
-                ax.text(0.5, 0.5, "No Data", ha='center', va='center', transform=ax.transAxes)
+                ax.text(0.5, 0.5, "データなし", ha='center', va='center', transform=ax.transAxes)
         else:
-            ax.text(0.5, 0.5, "Path Not Found", ha='center', va='center', transform=ax.transAxes)
+            ax.text(0.5, 0.5, "パスが見つかりません", ha='center', va='center', transform=ax.transAxes)
 
         ax.axis('off')
 
-    # 隐藏空的子图
+    # 空のサブプロットを非表示
     for idx in range(len(subjects), len(axes_flat)):
         axes_flat[idx].axis('off')
 
@@ -188,30 +202,33 @@ def visualize_subject_comparison(data_root, output_dir):
 
 def visualize_image_type_comparison(data_root, output_dir, fovs=["FovL", "FovS_180", "FovS_360"]):
     """
-    可视化5: 图像类型对比 (img vs prior vs gt)
+    画像タイプ比較 (img vs prior vs gt)
     固定: subject, phase, slice_position
-    变化: FOV (行), image_type (列) - 但添加prior列
+    変化: FOV (行), image_type (列) - 但添加prior列
+    @param {str} data_root - データルートディレクトリ
+    @param {str} output_dir - 出力ディレクトリ
+    @param {list} fovs - 視野（FOV）のリスト
     """
-    print("生成图像类型对比矩阵...")
+    print("画像タイプ比較行列図を生成中...")
 
     common_data = find_common_subjects_and_slices(data_root, fovs)
 
-    # 找到同时有img, gt和prior的样本
+    # img, gt, priorをすべて持つサンプルを検索
     selected_sample = None
     available_subjects = set()
 
-    # 首先收集有img和gt的受试者和相位
+    # まずimgとgtを持つ被験者とフェーズを収集
     for (subject, phase, img_type), fov_data in common_data.items():
         if img_type in ["img", "gt"] and len(fov_data) == len(fovs):
             available_subjects.add((subject, phase))
 
-    # 然后检查这些受试者是否也有prior数据
+    # 次に、これらの被験者がpriorデータも持っているか確認
     for subject_phase in available_subjects:
         subject, phase = subject_phase
         prior_key = (subject, "prior", "prior")
 
         if prior_key in common_data and len(common_data[prior_key]) == len(fovs):
-            # 检查img和gt是否也存在
+            # imgとgtも存在するか確認
             img_key = (subject, phase, "img")
             gt_key = (subject, phase, "gt")
 
@@ -221,13 +238,13 @@ def visualize_image_type_comparison(data_root, output_dir, fovs=["FovL", "FovS_1
                 break
 
     if not selected_sample:
-        print("未找到同时包含img, prior, gt的样本")
+        print("img, prior, gtをすべて含むサンプルが見つかりませんでした")
         return
 
     subject, phase = selected_sample
     img_types = ["img", "prior", "gt"]
 
-    # 创建3x3矩阵 (3个FOV x 3个image_type)
+    # 3x3の行列を作成 (3つのFOV x 3つの画像タイプ)
     fig, axes = plt.subplots(len(fovs), len(img_types), figsize=(15, 15))
     fig.suptitle(f"Image Type Comparison\n{subject} - {phase} - Slice {slice_idx}", fontsize=16)
 
@@ -235,7 +252,7 @@ def visualize_image_type_comparison(data_root, output_dir, fovs=["FovL", "FovS_1
         for j, img_type in enumerate(img_types):
             ax = axes[i, j]
 
-            # 构建文件路径 - 根据img_type确定路径
+            # ファイルパスを構築 - img_typeに基づいてパスを決定
             if img_type == 'prior':
                 img_path = os.path.join(data_root, fov, subject, "prior")
             else:
@@ -246,7 +263,7 @@ def visualize_image_type_comparison(data_root, output_dir, fovs=["FovL", "FovS_1
                 if slice_idx < len(img_files):
                     img = load_ct_slice(img_files[slice_idx])
                     if img is not None:
-                        # 根据图像类型调整显示参数
+                        # 画像タイプに基づいて表示パラメータを調整
                         if img_type == "prior":
                             vmin, vmax = -1000, 1000
                         else:
@@ -256,15 +273,15 @@ def visualize_image_type_comparison(data_root, output_dir, fovs=["FovL", "FovS_1
                         if i == 0:
                             ax.set_title(f"{img_type}")
                     else:
-                        ax.text(0.5, 0.5, "Load Failed", ha='center', va='center', transform=ax.transAxes)
+                        ax.text(0.5, 0.5, "読み込み失敗", ha='center', va='center', transform=ax.transAxes)
                 else:
-                    ax.text(0.5, 0.5, "No Data", ha='center', va='center', transform=ax.transAxes)
+                    ax.text(0.5, 0.5, "データなし", ha='center', va='center', transform=ax.transAxes)
             else:
-                ax.text(0.5, 0.5, "Path Not Found", ha='center', va='center', transform=ax.transAxes)
+                ax.text(0.5, 0.5, "パスが見つかりません", ha='center', va='center', transform=ax.transAxes)
 
             ax.axis('off')
 
-            # 在第一列添加FOV标签
+            # 最初の列にFOVラベルを追加
             if j == 0:
                 ax.text(-0.1, 0.5, fov, rotation=90, ha='center', va='center',
                         transform=ax.transAxes, fontsize=12, fontweight='bold')
@@ -276,13 +293,16 @@ def visualize_image_type_comparison(data_root, output_dir, fovs=["FovL", "FovS_1
 
 def create_respiratory_motion_gifs(data_root, output_dir, fovs=["FovL", "FovS_180", "FovS_360"]):
     """
-    创建呼吸运动GIF动画 - 针对每个FOV
+    呼吸運動GIFアニメーションの作成 - 各FOVについて
+    @param {str} data_root - データルートディレクトリ
+    @param {str} output_dir - 出力ディレクトリ
+    @param {list} fovs - 視野（FOV）のリスト
     """
-    print("创建呼吸运动GIF动画...")
+    print("呼吸運動GIFアニメーションを作成中...")
 
     common_data = find_common_subjects_and_slices(data_root, fovs)
 
-    # 找到有完整相位数据的受试者
+    # 完全なフェーズデータを持つ被験者を検索
     subject_phase_count = {}
     for (subject, phase, img_type), fov_data in common_data.items():
         if img_type == "img":
@@ -299,15 +319,14 @@ def create_respiratory_motion_gifs(data_root, output_dir, fovs=["FovL", "FovS_18
             break
 
     if not selected_subject:
-        print("未找到有完整相位数据的受试者")
+        print("完全なフェーズデータを持つ被験者が見つかりませんでした")
         return
 
     phases = [f"phase_{i:02d}" for i in range(5)]
 
-    # 为每个FOV创建GIF
+    # 各FOVについてGIFを作成
     for fov in fovs:
         images = []
-
         for phase in phases:
             img_path = os.path.join(data_root, fov, selected_subject, phase, "img")
             if os.path.exists(img_path):
@@ -315,46 +334,49 @@ def create_respiratory_motion_gifs(data_root, output_dir, fovs=["FovL", "FovS_18
                 if slice_idx < len(img_files):
                     img = load_ct_slice(img_files[slice_idx])
                     if img is not None:
-                        # 标准化到0-255范围
+                        # 0-255の範囲に正規化
                         normalized = np.clip((img + 1000) / 2000 * 255, 0, 255)
                         images.append(normalized.astype(np.uint8))
 
         if len(images) >= 5:
-            # 添加反向播放以形成循环
+            # ループを形成するために逆再生を追加
             images_cycle = images + images[-2:0:-1]
 
             gif_path = os.path.join(output_dir, f"respiratory_motion_{fov}.gif")
             imageio.mimsave(gif_path, images_cycle, duration=0.3)
-            print(f"呼吸运动GIF已保存: {gif_path}")
+            print(f"呼吸運動GIFを保存しました: {gif_path}")
 
 
 def visualize_phase_with_prior_matrix(data_root, output_dir, fovs=["FovL", "FovS_180", "FovS_360"]):
     """
-    可视化6: 呼吸相位与先验图像对比矩阵
+    呼吸フェーズと先行画像の比較行列の可視化
     固定: subject, image_type(img), slice_position
-    变化: FOV (行), phase + prior (列)
+    変化: FOV (行), phase + prior (列)
+    @param {str} data_root - データルートディレクトリ
+    @param {str} output_dir - 出力ディレクトリ
+    @param {list} fovs - 視野（FOV）のリスト
     """
-    print("生成呼吸相位与先验图像对比矩阵...")
+    print("呼吸フェーズと先行画像比較行列を生成中...")
 
     common_data = find_common_subjects_and_slices(data_root, fovs)
 
-    # 找到有完整相位数据和prior数据的受试者
+    # 完全なフェーズデータとpriorデータを持つ被験者を検索
     subject_phase_count = {}
     subjects_with_prior = set()
 
-    # 收集有complete phases的受试者
+    # 完全なフェーズを持つ被験者を収集
     for (subject, phase, img_type), fov_data in common_data.items():
         if img_type == "img" and len(fov_data) == len(fovs):
             if subject not in subject_phase_count:
                 subject_phase_count[subject] = set()
             subject_phase_count[subject].add(phase)
 
-    # 收集有prior数据的受试者
+    # priorデータを持つ被験者を収集
     for (subject, phase_key, img_type), fov_data in common_data.items():
         if phase_key == "prior" and img_type == "prior" and len(fov_data) == len(fovs):
             subjects_with_prior.add(subject)
 
-    # 选择既有完整相位又有prior的受试者
+    # 完全なフェーズとpriorの両方を持つ被験者を選択
     selected_subject = None
     for subject, phases in subject_phase_count.items():
         if len(phases) >= 5 and subject in subjects_with_prior:
@@ -362,13 +384,13 @@ def visualize_phase_with_prior_matrix(data_root, output_dir, fovs=["FovL", "FovS
             break
 
     if not selected_subject:
-        print("未找到有完整相位和prior数据的受试者")
+        print("完全なフェーズデータとpriorデータの両方を持つ被験者が見つかりませんでした")
         return
 
     phases = [f"phase_{i:02d}" for i in range(5)]
-    columns = phases + ["prior"]  # 5个phase + 1个prior
+    columns = phases + ["prior"]  # 5つのフェーズ + 1つのprior
 
-    # 创建矩阵 (3个FOV x 6列)
+    # 行列を作成 (3つのFOV x 6列)
     fig, axes = plt.subplots(len(fovs), len(columns), figsize=(24, 12))
     fig.suptitle(f"Respiratory Phases with Prior Reference\n{selected_subject} - img type - Slice {slice_idx}",
                  fontsize=16)
@@ -377,10 +399,10 @@ def visualize_phase_with_prior_matrix(data_root, output_dir, fovs=["FovL", "FovS
         for j, col_item in enumerate(columns):
             ax = axes[i, j]
 
-            # 根据列项确定路径
+            # 列項目に基づいてパスを決定
             if col_item == "prior":
                 img_path = os.path.join(data_root, fov, selected_subject, "prior")
-            else:  # col_item是phase
+            else:  # col_itemがphaseの場合
                 img_path = os.path.join(data_root, fov, selected_subject, col_item, "img")
 
             if os.path.exists(img_path):
@@ -389,18 +411,18 @@ def visualize_phase_with_prior_matrix(data_root, output_dir, fovs=["FovL", "FovS
                     img = load_ct_slice(img_files[slice_idx])
                     if img is not None:
                         ax.imshow(img, cmap='gray', vmin=-1000, vmax=1000)
-                        if i == 0:  # 只在第一行显示列标题
+                        if i == 0:  # 最初の行にのみ列タイトルを表示
                             ax.set_title(f"{col_item}")
                     else:
-                        ax.text(0.5, 0.5, "Load Failed", ha='center', va='center', transform=ax.transAxes)
+                        ax.text(0.5, 0.5, "読み込み失敗", ha='center', va='center', transform=ax.transAxes)
                 else:
-                    ax.text(0.5, 0.5, "No Data", ha='center', va='center', transform=ax.transAxes)
+                    ax.text(0.5, 0.5, "データなし", ha='center', va='center', transform=ax.transAxes)
             else:
-                ax.text(0.5, 0.5, "Path Not Found", ha='center', va='center', transform=ax.transAxes)
+                ax.text(0.5, 0.5, "パスが見つかりません", ha='center', va='center', transform=ax.transAxes)
 
             ax.axis('off')
 
-            # 在第一列添加FOV标签
+            # 最初の列にFOVラベルを追加
             if j == 0:
                 ax.text(-0.1, 0.5, fov, rotation=90, ha='center', va='center',
                         transform=ax.transAxes, fontsize=12, fontweight='bold')
@@ -412,41 +434,43 @@ def visualize_phase_with_prior_matrix(data_root, output_dir, fovs=["FovL", "FovS
 
 def generate_enhanced_visualizations(data_root, output_dir):
     """
-    生成增强的可视化图表
+    強化された可視化グラフを生成する
+    @param {str} data_root - データルートディレクトリ
+    @param {str} output_dir - 出力ディレクトリ
     """
-    print("开始生成增强的可视化图表...")
+    print("強化された可視化グラフの生成を開始します...")
 
     os.makedirs(output_dir, exist_ok=True)
 
     fovs = ["FovL", "FovS_180", "FovS_360"]
 
     try:
-        # 1. 切片深度进展
+        # 1. スライス深度進行
         visualize_slice_depth_progression(data_root, output_dir, fovs)
 
-        # 2. 受试者对比
+        # 2. 被験者比較
         visualize_subject_comparison(data_root, output_dir, fovs)
 
-        # 3. 图像类型对比
+        # 3. 画像タイプ比較
         visualize_image_type_comparison(data_root, output_dir, fovs)
 
-        # 4. 呼吸相位与先验图像对比矩阵
+        # 4. 呼吸フェーズと先行画像比較行列
         visualize_phase_with_prior_matrix(data_root, output_dir, fovs)
 
-        # 5. 创建呼吸运动GIF
+        # 5. 呼吸運動GIFを作成
         create_respiratory_motion_gifs(data_root, output_dir, fovs)
 
-        print(f"所有增强可视化图表已保存到: {output_dir}")
+        print(f"すべての強化された可視化グラフは次の場所に保存されました: {output_dir}")
 
     except Exception as e:
-        print(f"生成可视化时出错: {str(e)}")
+        print(f"可視化生成中にエラーが発生しました: {str(e)}")
         import traceback
         traceback.print_exc()
 
 
-# 使用示例
+# 使用例
 if __name__ == "__main__":
     DATA_ROOT = DATASET_CONFIG['data_root']
     OUTPUT_DIR = "./eda_results"
-    slice_idx = 100
+    slice_idx = 100 # 全体のslice_idxをここで定義
     generate_enhanced_visualizations(DATA_ROOT, OUTPUT_DIR)

@@ -7,15 +7,15 @@ from monai.transforms import (Compose, EnsureChannelFirst, ScaleIntensityRange, 
 
 
 class Test_Dataset(data.Dataset):
-    def __init__(self, root_data, indices):
+    """
+    テストデータセットクラス。医療画像ファイル (.img) を読み込み、前処理を行う。
+    """
+    def __init__(self, root_data: str, indices: list[int]):
         """
-        初始化数据集
-
-        参数:
-        root_data: 图像根目录
-        HMIndex: 数据集索引列表
+        データセットを初期化する。
+        @param root_data: 画像のルートディレクトリ
+        @param indices: データセットに含める被験者 (subject) のインデックスリスト
         """
-        # self.transform = T.ToTensor()
         self.transform = Compose([
             EnsureChannelFirst(channel_dim="no_channel"),
             ScaleIntensityRange(
@@ -25,48 +25,52 @@ class Test_Dataset(data.Dataset):
                 b_max=1.0,
                 clip=True,
             ),
-            # 转换为Tensor
+            # テンソルに変換
             ToTensor()
         ])
         self.TrainingSet = []
-        print(f"开始构建数据集，基础路径: {root_data}")
+        print(f"データセットの構築を開始します。ベースパス: {root_data}")
 
-        # 遍历所有FOV
+        # すべてのFOVを反復処理
         for fov in ["FovL", "FovS_180", "FovS_360"]:
             fov_path = os.path.join(root_data, fov)
 
-            # 遍历所有subject
+            # すべての被験者 (subject) を反復処理
             subjects = [d for d in os.listdir(fov_path)
                         if os.path.isdir(os.path.join(fov_path, d)) and int(d.split("_")[1]) in indices]
-            print(f"{fov} subjects: {subjects}")
+            print(f"{fov} 被験者: {subjects}")
 
             for subject in subjects:
                 subject_path = os.path.join(fov_path, subject)
 
-                # 获取先验图像路径 (所有相位共享)
+                # 事前情報 (prior) 画像パスを取得 (すべてのフェーズで共有)
                 prior_dir = os.path.join(subject_path, "prior")
                 prior_files = sorted(glob.glob(os.path.join(prior_dir, "*.img")))
 
-                # 遍历所有phase (00-04)
+                # すべてのフェーズ (00-04) を反復処理
                 for phase in [f"phase_{i:02d}" for i in range(5)]:
                     phase_path = os.path.join(subject_path, phase)
 
-                    # 检查img和gt目录是否存在
+                    # imgディレクトリの存在を確認
                     img_dir = os.path.join(phase_path, "img")
 
                     if os.path.exists(img_dir):
-                        # 获取该相位的所有图像和标签切片
+                        # このフェーズのすべての画像スライスを取得
                         img_files = sorted(glob.glob(os.path.join(img_dir, "*.img")))
-                        # 为每个img_file创建[img_file, prior_file]对
+                        # 各img_fileに対して[img_file, prior_file]のペアを作成
                         for img_file, prior_file in zip(img_files, prior_files):
                             self.TrainingSet.append([img_file, prior_file])
 
-    def __getitem__(self, index):
-
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, str]:
+        """
+        指定されたインデックスのアイテムを取得する。
+        @param index: アイテムのインデックス
+        @returns: 画像テンソル、事前情報テンソル、画像パスのタプル
+        """
         img_path, prior_path = self.TrainingSet[index]
         with open(img_path, 'rb') as f_img:
-            raw_data_img = np.fromfile(f_img, dtype=np.int16)
-            img = raw_data_img.reshape((512, 512)).astype(float)
+            raw_dat_img = np.fromfile(f_img, dtype=np.int16)
+            img = raw_dat_img.reshape((512, 512)).astype(float)
 
         with open(prior_path, 'rb') as f_prior:
             raw_data_prior = np.fromfile(f_prior, dtype=np.int16)
@@ -77,5 +81,9 @@ class Test_Dataset(data.Dataset):
 
         return img, prior, img_path
 
-    def __len__(self):  # retures the length of the dataset
+    def __len__(self) -> int:
+        """
+        データセットの長さを返す。
+        @returns: データセットのアイテム数
+        """
         return len(self.TrainingSet)
