@@ -62,6 +62,7 @@ class NnetTrainer:
         self.best_val_loss = float('inf')
         self.best_val_metrics = None
         self.best_epoch = 0
+        self.scheduler_lr_epoch = ['StepLR', 'ReduceLROnPlateau']
 
     def setup_logging(self):
         """wandbおよびTensorBoardロギングを設定する。
@@ -238,7 +239,7 @@ class NnetTrainer:
         weight_ssim = TRAINING_CONFIG['weight_ssim']
         self.optimizer = optim.Adam(
             self.model.parameters(),
-            lr=SCHEDULER_CONFIG['lr']
+            lr=SCHEDULER_CONFIG['max_lr']
         )
 
         # 設定に基づいて学習率スケジューラを選択
@@ -250,27 +251,24 @@ class NnetTrainer:
                 gamma=SCHEDULER_CONFIG['gamma']
             )
         elif self.scheduler_type == 'ReduceLROnPlateau':         # 改善が停止した際に学習率を低下
-            # ReduceLROnPlateauは通常各エポック後に更新されますが、ここではvalidate_epoch後に更新します
             self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
                 mode='min',
                 factor=SCHEDULER_CONFIG['plateau_factor'],
                 patience=SCHEDULER_CONFIG['plateau_patience'],
                 verbose=True,
-                min_lr=SCHEDULER_CONFIG['min_lr']
+                min_lr=SCHEDULER_CONFIG['ReduceLR_min_lr']
             )
         elif self.scheduler_type == 'CosineAnnealingWarmRestarts':           # ウォームリスタート付きコサインアニーリング
             self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 self.optimizer,
                 T_0=SCHEDULER_CONFIG['T_0'] * batches_per_epoch,
                 T_mult=SCHEDULER_CONFIG['T_mult'],
-                eta_min=SCHEDULER_CONFIG['min_lr']
             )
         elif self.scheduler_type == 'CosineAnnealingLR':         # コサインアニーリング
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
                 T_max=total_batches,
-                eta_min=SCHEDULER_CONFIG['min_lr']
             )
         elif self.scheduler_type == 'CyclicLR':          # サイクリック学習率
             self.scheduler = optim.lr_scheduler.CyclicLR(
@@ -293,7 +291,6 @@ class NnetTrainer:
                 self.optimizer,
                 T_0=SCHEDULER_CONFIG['T_0'] * batches_per_epoch,        # 初期再起動周期
                 T_mult=SCHEDULER_CONFIG['T_mult'],  # 周期乗数
-                eta_min=SCHEDULER_CONFIG['min_lr']
             )
 
         self.mse_loss = MSELoss().to(self.device)
@@ -386,7 +383,7 @@ class NnetTrainer:
                 # オプティマイザの更新
                 self.optimizer.step()
                 # 学習率スケジューラの更新
-                if not self.scheduler_type in ['StepLR', 'ReduceLROnPlateau']:
+                if not self.scheduler_type in self.scheduler_lr_epoch:
                     self.scheduler.step()
 
                 if i % 10 == 0:
@@ -549,7 +546,7 @@ class NnetTrainer:
                 'val_mae': avg_metrics['mae'],
                 'val_psnr': avg_metrics['psnr'],
                 'val_ssim': avg_metrics['ssim'],
-                'msssim': avg_metrics['msssim'],
+                'val_msssim': avg_metrics['msssim'],
                 'val_corr2': avg_metrics['corr2'],
             })
 
@@ -570,7 +567,7 @@ class NnetTrainer:
             # メモリを強制的に解放
             free_memory()
             # 学習率スケジューラの更新
-            if self.scheduler_type in ['StepLR', 'ReduceLROnPlateau']:
+            if self.scheduler_type in self.scheduler_lr_epoch:
                 self.scheduler.step()
 
         self.cleanup()

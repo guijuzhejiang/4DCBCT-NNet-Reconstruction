@@ -42,13 +42,13 @@ LOGGING_CONFIG = {
     'use_wandb': True,
     'use_tensorboard': True,
     'wandb_project': 'nnet-medical-ct',
-    'wandb_entity': None,  # 必要に応じてwandbエンティティ/ユーザー名を設定
+    'wandb_entity': None,
     'tensorboard_log_dir': './logs',
 }
 
 # 学習率スケジューラ
 SCHEDULER_CONFIG = {
-    'type': 'CyclicLR',
+    'type': 'ReduceLROnPlateau',
     'step_size': 1,     #default 5
     'gamma': 0.90,
     'lr': 1e-5,
@@ -56,9 +56,10 @@ SCHEDULER_CONFIG = {
     'max_lr': 1e-4,
     # ReduceLROnPlateau パラメータ
     'plateau_factor': 0.5,
-    'plateau_patience': 5,
+    'plateau_patience': 1,
+    'ReduceLR_min_lr': 1e-7,
     # CosineAnnealingWarmRestarts パラメータ
-    'T_0': 4,
+    'T_0': 1,
     'T_mult': 2,
     # OneCycleLR パラメータ
     'pct_start': 0.3,

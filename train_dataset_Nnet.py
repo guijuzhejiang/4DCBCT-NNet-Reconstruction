@@ -17,7 +17,7 @@ class Nnet_Dataset(data.Dataset):
         データセットを初期化する。
 
         @param root_data: 画像ルートディレクトリ
-        @param fov_type: 視野タイプ (例: "FovL", "FovS_180")
+        @param fov_type: 視野タイプ (例: "FovL", "FovS_180", "FovS_360")
         @param indices: 処理するデータセットインデックスのリスト
         """
         self.samples = []

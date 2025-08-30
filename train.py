@@ -192,7 +192,7 @@ class NnetTrainer:
         total_batches = TRAINING_CONFIG['epochs'] * batches_per_epoch
         self.optimizer = optim.Adam(
             self.model.parameters(),
-            lr=SCHEDULER_CONFIG['lr']
+            lr=SCHEDULER_CONFIG['max_lr']
         )
 
         # 設定に基づいて学習率スケジューラを選択
@@ -491,7 +491,7 @@ class NnetTrainer:
                 'val_mae': avg_metrics['mae'],
                 'val_psnr': avg_metrics['psnr'],
                 'val_ssim': avg_metrics['ssim'],
-                'msssim': avg_metrics['msssim'],
+                'val_msssim': avg_metrics['msssim'],
                 'val_corr2': avg_metrics['corr2'],
             })
 
