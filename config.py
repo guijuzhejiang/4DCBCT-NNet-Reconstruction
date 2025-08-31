@@ -20,7 +20,7 @@ TRAINING_CONFIG = {
 DATASET_CONFIG = {
     # 'data_root': '/media/zzg/GJ_disk01/data/Medical/4D_Lung_CBCT_Hitachi/dataset',
     'data_root': '/home/zzg/data/Medical/4D_Lung_CBCT_Hitachi/dataset/',
-    'fov_type': 'FovS_180',            #"FovL", "FovS_180", "FovS_360"
+    'fov_type': 'FovS_360',            #"FovL", "FovS_180", "FovS_360"
     'train_dataset_indices': list(range(0, 40)),
     # 'train_dataset_indices': [0],
     'val_dataset_indices': list(range(40, 45)),
@@ -55,7 +55,7 @@ SCHEDULER_CONFIG = {
     'min_lr': 1e-6,
     'max_lr': 1e-4,
     # ReduceLROnPlateau パラメータ
-    'plateau_factor': 0.5,
+    'plateau_factor': 0.2,
     'plateau_patience': 1,
     'ReduceLR_min_lr': 1e-7,
     # CosineAnnealingWarmRestarts パラメータ

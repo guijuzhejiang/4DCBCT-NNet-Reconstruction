@@ -9,6 +9,7 @@ This project implements a deep learning pipeline for 4D Cone-Beam CT (CBCT) medi
 - **Custom NNet Model**: Deep neural network for artifact reduction and image enhancement in 4D CBCT.
 - **Flexible Data Pipeline**: Handles raw `.img` medical images, supports prior and phase data.
 - **Comprehensive EDA**: Visualization and statistical analysis of dataset characteristics.
+- **Dataset Integrity Check**: Verifies the dataset structure and file counts to ensure it meets training requirements.
 - **Configurable Training**: All hyperparameters and paths are managed via `config.py`.
 - **Evaluation & Testing**: Includes scripts for validation and test image generation.
 - **Logging**: Supports TensorBoard and Weights & Biases for experiment tracking.
@@ -16,6 +17,7 @@ This project implements a deep learning pipeline for 4D Cone-Beam CT (CBCT) medi
 ### Directory Structure
 - `config.py`: Configuration for dataset, model, training, and logging.
 - `model_Nnet.py`: NNet model architecture.
+- `check_data.py`: Dataset integrity check script.
 - `train.py`, `train_dataaug.py`: Training scripts (with/without data augmentation).
 - `train_dataset_Nnet.py`, `test_dataset_Nnet.py`: Dataset classes for training and testing.
 - `EDA.py`: Exploratory data analysis and visualization.
@@ -31,11 +33,16 @@ This project implements a deep learning pipeline for 4D Cone-Beam CT (CBCT) medi
 
 ### Usage
 1. Configure paths and parameters in `config.py`.
-2. Run EDA:  
+2. Run dataset integrity check:
+   ```bash
+   python check_data.py
+   ```
+   This script uses `DATASET_CONFIG['data_root']` from `config.py` as the root path to verify the dataset's directory structure and file counts against training requirements.
+3. Run EDA:  
    ```bash
    python EDA.py
    ```
-3. Train the model:  
+4. Train the model:  
    ```bash
    python train.py
    ```
@@ -43,4 +50,4 @@ This project implements a deep learning pipeline for 4D Cone-Beam CT (CBCT) medi
    ```bash
    python train_dataaug.py
    ```
-4. Validate and test using `validation.py` and `test.py`.
+5. Validate and test using `validation.py` and `test.py`.

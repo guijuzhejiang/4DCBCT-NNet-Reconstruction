@@ -27,7 +27,7 @@ from monai.utils import set_determinism
 from monai.transforms import (
     Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, ToTensord
 )
-from monai.data import Dataset, CacheDataset, ThreadDataLoader, SmartCacheDataset, PersistentDataset, LMDBDataset
+from monai.data import Dataset, CacheDataset, DataLoader, ThreadDataLoader, SmartCacheDataset, PersistentDataset, LMDBDataset
 from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric, MultiScaleSSIMMetric
 from datetime import datetime
 import wandb
@@ -48,7 +48,7 @@ class NnetTrainer:
         self.fov_type = DATASET_CONFIG.get('fov_type', 'FovL')
         # 指標計算器を初期化
         self.ssim_metric = SSIMMetric(spatial_dims=2, reduction="mean")
-        self.msssim_metric = MultiScaleSSIMMetric(spatial_dims=2, data_range=1.0, reduction="mean") #画像は[0,1]に正規化されているため
+        self.msssim_metric = MultiScaleSSIMMetric(spatial_dims=2, data_range=1.0, reduction="mean")
         self.mae_metric = MAEMetric(reduction="mean")
         self.psnr_metric = PSNRMetric(max_val=1.0, reduction="mean")
         self.rmse_metric = RMSEMetric(reduction="mean")
@@ -61,6 +61,8 @@ class NnetTrainer:
         self.best_val_loss = float('inf')
         self.best_val_metrics = None
         self.best_epoch = 0
+        self.last_val_loss = float('inf')
+        self.scheduler_lr_epoch = ['StepLR', 'ReduceLROnPlateau']
 
     def setup_logging(self):
         """wandbおよびTensorBoardロギングを設定する。
@@ -142,24 +144,23 @@ class NnetTrainer:
         )
 
         # MONAI最適化DataLoader
-        self.train_loader = ThreadDataLoader(
+        self.train_loader = DataLoader(
             self.train_dataset,
             batch_size=TRAINING_CONFIG['train_batch_size'],
             shuffle=True,
             num_workers=TRAINING_CONFIG['num_workers'],
             drop_last=False,
             pin_memory=torch.cuda.is_available(),
-            prefetch_factor=4,
-            persistent_workers=True,
+            prefetch_factor=2,
+            persistent_workers=False,
         )
-
-        self.val_loader = ThreadDataLoader(
+        self.val_loader = DataLoader(
             self.val_dataset,
             batch_size=TRAINING_CONFIG['val_batch_size'],
             num_workers=TRAINING_CONFIG['num_workers'],
             pin_memory=torch.cuda.is_available(),
-            prefetch_factor=4,
-            persistent_workers=True,
+            prefetch_factor=2,
+            persistent_workers=False,
         )
 
     def setup_model(self):
@@ -182,9 +183,6 @@ class NnetTrainer:
             dummy_input2 = torch.randn(1, MODEL_CONFIG['input_channels'], *DATASET_CONFIG['image_size']).to(self.device)
             self.tb_writer.add_graph(self.model, (dummy_input1, dummy_input2))
 
-        print(f"モデルパラメータ数: {sum(p.numel() for p in self.model.parameters()):,}")
-        print(f"学習可能パラメータ数: {sum(p.numel() for p in self.model.parameters() if p.requires_grad):,}")
-
     def setup_optimizer(self):
         """オプティマイザと損失関数を設定する。
         """
@@ -203,27 +201,24 @@ class NnetTrainer:
                 gamma=SCHEDULER_CONFIG['gamma']
             )
         elif self.scheduler_type == 'ReduceLROnPlateau':         # 改善が停止した際に学習率を低下
-            # ReduceLROnPlateauは通常各エポック後に更新されますが、ここではvalidate_epoch後に更新します
             self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
                 mode='min',
                 factor=SCHEDULER_CONFIG['plateau_factor'],
                 patience=SCHEDULER_CONFIG['plateau_patience'],
                 verbose=True,
-                min_lr=SCHEDULER_CONFIG['min_lr']
+                min_lr=SCHEDULER_CONFIG['ReduceLR_min_lr']
             )
         elif self.scheduler_type == 'CosineAnnealingWarmRestarts':           # ウォームリスタート付きコサインアニーリング
             self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 self.optimizer,
                 T_0=SCHEDULER_CONFIG['T_0'] * batches_per_epoch,
                 T_mult=SCHEDULER_CONFIG['T_mult'],
-                eta_min=SCHEDULER_CONFIG['min_lr']
             )
         elif self.scheduler_type == 'CosineAnnealingLR':         # コサインアニーリング
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
                 T_max=total_batches,
-                eta_min=SCHEDULER_CONFIG['min_lr']
             )
         elif self.scheduler_type == 'CyclicLR':          # サイクリック学習率
             self.scheduler = optim.lr_scheduler.CyclicLR(
@@ -246,7 +241,6 @@ class NnetTrainer:
                 self.optimizer,
                 T_0=SCHEDULER_CONFIG['T_0'] * batches_per_epoch,        # 初期再起動周期
                 T_mult=SCHEDULER_CONFIG['T_mult'],  # 周期乗数
-                eta_min=SCHEDULER_CONFIG['min_lr']
             )
 
         self.mse_loss = MSELoss().to(self.device)
@@ -328,7 +322,7 @@ class NnetTrainer:
                 # オプティマイザの更新
                 self.optimizer.step()
                 # 学習率スケジューラの更新
-                if not self.scheduler_type in ['StepLR', 'ReduceLROnPlateau']:
+                if not self.scheduler_type in self.scheduler_lr_epoch:
                     self.scheduler.step()
 
                 if i % 10 == 0:
@@ -413,13 +407,13 @@ class NnetTrainer:
                     running_metrics[key] += batch_metrics[key]
 
         # 平均を計算
-        avg_loss = running_loss / num_batches
+        self.last_val_loss = running_loss / num_batches
         avg_metrics = {k: v / num_batches for k, v in running_metrics.items()}
 
         print(
             f"[Epoch {epoch + 1}] "
             f"LR: {self.optimizer.param_groups[0]['lr']}, "
-            f"Val_Loss: {avg_loss:.6f}, "
+            f"Val_Loss: {self.last_val_loss:.6f}, "
             f"Val_RMSE: {avg_metrics['rmse']:.6f}, "
             f"Val_MAE: {avg_metrics['mae']:.6f}, "
             f"Val_PSNR: {avg_metrics['psnr']:.6f}, "
@@ -428,8 +422,8 @@ class NnetTrainer:
             f"Val_CORR2: {avg_metrics['corr2']:.6f}"
         )
         # 現在の最良性能かチェック
-        if avg_loss < self.best_val_loss:
-            self.best_val_loss = avg_loss
+        if self.last_val_loss < self.best_val_loss:
+            self.best_val_loss = self.last_val_loss
             self.best_val_metrics = avg_metrics
             self.best_epoch = epoch + 1
             # モデル保存ディレクトリ
@@ -441,7 +435,7 @@ class NnetTrainer:
                 save_model(
                     self.model,
                     epoch + 1,
-                    avg_loss,
+                    self.last_val_loss,
                     model_save_dir,
                     'nnet_medical_ct_best'
                 )
@@ -475,7 +469,7 @@ class NnetTrainer:
         )
         # TensorBoardにログ記録
         if self.tb_writer:
-            self.tb_writer.add_scalar('Val/Loss', avg_loss, epoch)
+            self.tb_writer.add_scalar('Val/Loss', self.last_val_loss, epoch)
             self.tb_writer.add_scalar('Val/RMSE', avg_metrics['rmse'], epoch)
             self.tb_writer.add_scalar('Val/MAE', avg_metrics['mae'], epoch)
             self.tb_writer.add_scalar('Val/PSNR', avg_metrics['psnr'], epoch)
@@ -486,7 +480,7 @@ class NnetTrainer:
         # Wandbにログ記録
         if self.use_wandb:
             wandb.log({
-                'val_loss': avg_loss,
+                'val_loss': self.last_val_loss,
                 'val_rmse': avg_metrics['rmse'],
                 'val_mae': avg_metrics['mae'],
                 'val_psnr': avg_metrics['psnr'],
@@ -510,9 +504,10 @@ class NnetTrainer:
             # メモリを強制的に解放
             free_memory()
             # 学習率スケジューラの更新
-            if self.scheduler_type in ['StepLR', 'ReduceLROnPlateau']:
+            if self.scheduler_type == 'ReduceLROnPlateau':
+                self.scheduler.step(self.last_val_loss)
+            elif self.scheduler_type == 'StepLR':
                 self.scheduler.step()
-
         self.cleanup()
 
     def cleanup(self):

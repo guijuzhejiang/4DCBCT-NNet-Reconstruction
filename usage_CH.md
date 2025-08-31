@@ -186,6 +186,11 @@ DEVICE_CONFIG = {
 **重要提示:**
 
 - 在修改 `data_root` 时，请确保路径是正确的绝对路径或相对于项目根目录的正确路径。
+- 运行数据完整性检查脚本 `check_data.py`：
+  ```bash
+  python check_data.py
+  ```
+  此脚本将使用 `config.py` 中 `DATASET_CONFIG['data_root']` 定义的路径作为数据集根目录，并检查其目录结构和文件数量是否满足训练要求。强烈建议在开始训练前运行此脚本。
 - 更改 `fov_type` 可能需要对应的数据集文件存在。
 - 根据您的硬件资源调整 `train_batch_size` 和 `val_batch_size`，以避免内存不足错误。
 - 调整损失权重 (`weight_l1`, `weight_percep`, `weight_ssim`, `weight_mse`) 以优化模型性能。

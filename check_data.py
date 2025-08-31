@@ -17,12 +17,27 @@ from config import DATASET_CONFIG
 
 
 # 期待される設定
-EXPECTED_FOVS = ["FovL", "FovS_180", "FovS_360"]
-EXPECTED_SUBJECTS = [f"subject_{i:04d}" for i in range(50)]  # 0000 - 0049
-EXPECTED_PHASES = [f"phase_{i:02d}" for i in range(5)]       # phase_00 - phase_04
-EXPECTED_IMG_COUNT = 384
+EXPECTED_FOVS: list[str] = ["FovL", "FovS_180", "FovS_360"]
+EXPECTED_SUBJECTS: list[str] = [f"subject_{i:04d}" for i in range(50)]  # 0000 - 0049
+EXPECTED_PHASES: list[str] = [f"phase_{i:02d}" for i in range(5)]       # phase_00 - phase_04
+EXPECTED_IMG_COUNT: int = 384
 
-def check_dataset(root_data):
+def check_dataset(root_data: str) -> None:
+    """データセットの整合性をチェックする。
+
+    この関数は、指定されたルートディレクトリ内のデータセットがN-net学習の要件を
+    満たしているかを確認します。具体的には、以下の項目を検証します。
+
+    1. ルート直下に "FovL", "FovS_180", "FovS_360" ディレクトリが存在し、
+       それぞれ subject_0000 ～ subject_0049 を含むこと。
+    2. 各 subject_00xx ディレクトリ配下に phase_00 ～ phase_04 および prior ディレクトリが存在すること。
+    3. prior フォルダに 384 個の *.img ファイルが存在すること。
+    4. 各 phase ディレクトリに gt と img ディレクトリが存在すること。
+    5. 各 gt と img ディレクトリにそれぞれ 384 個の *.img ファイルが存在すること。
+
+    Args:
+        root_data (str): データセットのルートディレクトリパス。
+    """
     problems = 0
 
     # 1) FOV ディレクトリの存在確認
