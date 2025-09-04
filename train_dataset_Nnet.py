@@ -39,8 +39,10 @@ class Nnet_Dataset(data.Dataset):
             prior_dir = os.path.join(subject_path, "prior")
             prior_files = sorted(glob.glob(os.path.join(prior_dir, "*.img")))
 
-            # すべてのフェーズ (00-04) を反復処理
-            for phase in [f"phase_{i:02d}" for i in range(5)]:
+            # # すべてのフェーズ (00-04) を反復処理
+            # for phase in [f"phase_{i:02d}" for i in range(5)]:
+            # phase_00のみ使用
+            for phase in [f"phase_{i:02d}" for i in range(1)]:
                 phase_path = os.path.join(subject_path, phase)
 
                 # imgおよびgtディレクトリが存在するかチェック

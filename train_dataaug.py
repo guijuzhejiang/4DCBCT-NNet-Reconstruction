@@ -253,7 +253,6 @@ class NnetTrainer:
                 mode='min',
                 factor=SCHEDULER_CONFIG['plateau_factor'],
                 patience=SCHEDULER_CONFIG['plateau_patience'],
-                verbose=True,
                 min_lr=SCHEDULER_CONFIG['ReduceLR_min_lr']
             )
         elif self.scheduler_type == 'CosineAnnealingWarmRestarts':           # ウォームリスタート付きコサインアニーリング
