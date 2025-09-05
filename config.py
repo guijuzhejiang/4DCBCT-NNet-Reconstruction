@@ -14,6 +14,7 @@ TRAINING_CONFIG = {
     'weight_ssim': 0.3,
     'weight_mse': 0.4,
     'seed': 42,
+    'early_stopping_patience': 2,
 }
 
 # データセット設定

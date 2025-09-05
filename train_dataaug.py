@@ -34,6 +34,7 @@ from datetime import datetime
 import wandb
 from img_reader import CustomIMGReader
 from utils import free_memory
+from early_stop import EarlyStopping
 
 
 class NnetTrainer:
@@ -64,6 +65,7 @@ class NnetTrainer:
         self.best_epoch = 0
         self.last_val_loss = float('inf')
         self.scheduler_lr_epoch = ['StepLR', 'ReduceLROnPlateau']
+        self.early_stopping = EarlyStopping(patience=TRAINING_CONFIG.get('early_stopping_patience', 1), verbose=True)
 
     def setup_logging(self):
         """wandbおよびTensorBoardロギングを設定する。
@@ -545,6 +547,8 @@ class NnetTrainer:
                 'val_corr2': avg_metrics['corr2'],
             })
 
+        return self.last_val_loss
+
     def train(self):
         """主要な学習ループ。
         """
@@ -557,6 +561,13 @@ class NnetTrainer:
             self.train_epoch(epoch)
             # 検証
             self.validate_epoch(epoch)
+
+            val_loss = self.validate_epoch(epoch)
+            self.early_stopping(val_loss)
+            if self.early_stopping.early_stop:
+                print("Early stopping triggered")
+                break
+
             # メモリを強制的に解放
             free_memory()
             # 学習率スケジューラの更新
