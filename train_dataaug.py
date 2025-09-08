@@ -126,7 +126,7 @@ class NnetTrainer:
                 keys=["img", "prior", "label"],
                 mode=("bilinear", "bilinear", "bilinear"),
                 prob=1.0,
-                rotate_range=(0.1, 0.1),
+                rotate_range=(0.05, 0.05),
                 translate_range=(10, 10),
                 scale_range=(0.1, 0.1),
                 padding_mode="zeros"

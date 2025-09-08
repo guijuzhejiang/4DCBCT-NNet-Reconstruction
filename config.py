@@ -14,14 +14,14 @@ TRAINING_CONFIG = {
     'weight_ssim': 0.3,
     'weight_mse': 0.4,
     'seed': 42,
-    'early_stopping_patience': 2,
+    'early_stopping_patience': 4,
 }
 
 # データセット設定
 DATASET_CONFIG = {
     # 'data_root': '/media/zzg/GJ_disk01/data/Medical/4D_Lung_CBCT_Hitachi/dataset',
     'data_root': '/home/zzg/data/Medical/4D_Lung_CBCT_Hitachi/dataset/',
-    'fov_type': 'FovS_360',            #"FovL", "FovS_180", "FovS_360"
+    'fov_type': 'FovL',            #"FovL", "FovS_180", "FovS_360"
     'train_dataset_indices': list(range(0, 40)),
     # 'train_dataset_indices': [0],
     'val_dataset_indices': list(range(40, 45)),
