@@ -14,7 +14,7 @@ class CustomIMGReader(ImageReader):
 
     def __init__(self,
                  image_shape: tuple = (1, 512, 512),
-                 dtype: np.dtype = np.int16,
+                 dtype: np.dtype = '<i2',
                  output_dtype: type = float,
                  **kwargs):
         super().__init__()
@@ -47,7 +47,7 @@ class CustomIMGReader(ImageReader):
             raise ValueError("一度に複数のファイルを読み込むことはできません")
 
         with open(filenames[0], 'rb') as f:
-            raw_data = np.fromfile(f, dtype=self.dtype)
+            raw_data = np.fromfile(f, dtype=self.dtype, count=self.image_shape[1] * self.image_shape[2])
         return raw_data.reshape(self.image_shape).astype(self.output_dtype)
 
     def get_data(self, img: np.ndarray, **kwargs) -> Tuple[np.ndarray, Dict]:

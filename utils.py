@@ -10,6 +10,7 @@ import math
 from pytorch_msssim import ssim
 import psutil
 import gc
+from pathlib import Path
 
 
 def get_dataset_slice_counts(data_root: str, indices: List[int]) -> Tuple[
@@ -59,7 +60,12 @@ def setup_device(use_cuda: bool = True, cuda_device: int = 0) -> torch.device:
     return device
 
 
-def save_model(model: torch.nn.Module, epoch: int, loss: float, save_dir: str, model_name: str = "nnet") -> str:
+def save_model(model: torch.nn.Module,
+               epoch: int,
+               loss: float,
+               save_dir: str,
+               model_name: str = "nnet",
+               keep_last: int = 1,) -> str:
     """
     モデルのチェックポイントを保存する。
 
@@ -71,16 +77,28 @@ def save_model(model: torch.nn.Module, epoch: int, loss: float, save_dir: str, m
 
     @returns: 保存されたモデルへのパス
     """
-    os.makedirs(save_dir, exist_ok=True)
-
-    filename = f"{model_name}_epoch{epoch}_loss{loss:.6f}.pth"
-    filepath = os.path.join(save_dir, filename)
+    save_dir = Path(save_dir)
+    filename = f"{model_name}_epoch{epoch}_loss{loss:.6f}.pt"
+    filepath = save_dir / filename
+    filepath_best = save_dir / "best_model.pt"
 
     # 互換性を高めるため、モデル全体ではなくモデルの状態辞書を保存
     torch.save(model.state_dict(), filepath)
+    torch.save(model.state_dict(), filepath_best)
     print(f"モデルを保存しました: {filepath}")
 
-    return filepath
+    if keep_last is not None and keep_last >= 0:
+        pattern = str(save_dir / f"{model_name}_epoch*.pt")
+        epoch_files = [Path(p) for p in glob.glob(pattern)]
+        epoch_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        to_delete = epoch_files[keep_last:]
+        for p in to_delete:
+            try:
+                if p == filepath or p == filepath_best:
+                    continue
+                p.unlink()
+            except Exception as e:
+                print(f"古いモデルファイルを削除できません {p}: {e}")
 
 
 def calculate_metrics(prediction: torch.Tensor, target: torch.Tensor) -> Dict[str, float]:

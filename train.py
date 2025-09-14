@@ -25,7 +25,7 @@ from monai.losses import SSIMLoss, PerceptualLoss, MultiScaleLoss
 from torch.nn import MSELoss, L1Loss
 from monai.utils import set_determinism
 from monai.transforms import (
-    Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, ToTensord
+    Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, ToTensord, LambdaD
 )
 from monai.data import Dataset, CacheDataset, DataLoader, ThreadDataLoader, SmartCacheDataset, PersistentDataset, LMDBDataset
 from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric, MultiScaleSSIMMetric
@@ -46,7 +46,7 @@ class NnetTrainer:
         self.device = setup_device(DEVICE_CONFIG['use_cuda'], DEVICE_CONFIG['cuda_device'])
         self.scheduler_type = SCHEDULER_CONFIG.get('type', 'StepLR')
         print(f"学習率スケジューラ: {self.scheduler_type}を使用します")
-        self.fov_type = DATASET_CONFIG.get('fov_type', 'FovL')
+        self.fov_type = DATASET_CONFIG.get('train_fov_type', 'FovL')
         # 指標計算器を初期化
         self.ssim_metric = SSIMMetric(spatial_dims=2, reduction="mean")
         self.msssim_metric = MultiScaleSSIMMetric(spatial_dims=2, data_range=1.0, reduction="mean")
@@ -107,18 +107,19 @@ class NnetTrainer:
         """データローダを設定する。
         """
         # リーダーを作成
-        reader = CustomIMGReader(image_shape=(1, 512, 512), dtype=np.int16, output_dtype=float)
+        reader = CustomIMGReader()
         train_val_transforms = Compose([
             LoadImaged(keys=["img", "prior", "label"], reader=reader),
             EnsureChannelFirstd(keys=["img", "prior", "label"]),
-            ScaleIntensityRanged(
-                keys=["img", "prior", "label"],
-                a_min=-1000,
-                a_max=400,
-                b_min=0.0,
-                b_max=1.0,
-                clip=True,
-            ),
+            LambdaD(keys=["img", "prior", "label"], func=lambda x: (x.astype(np.float32) - 2000.0) / 3000.0),
+            # ScaleIntensityRanged(
+            #     keys=["img", "prior", "label"],
+            #     a_min=-1000,
+            #     a_max=400,
+            #     b_min=0.0,
+            #     b_max=1.0,
+            #     clip=True,
+            # ),
             ToTensord(keys=["img", "prior", "label"])
         ])
 
@@ -603,7 +604,7 @@ def main():
 
     # 実験ディレクトリを作成
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_dir = os.path.join("experiments", "Nnet", DATASET_CONFIG['fov_type'], f"{timestamp}")
+    experiment_dir = os.path.join("experiments", "Nnet", DATASET_CONFIG['train_fov_type'], f"{timestamp}")
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"実験ディレクトリを作成しました: {experiment_dir}")
 
