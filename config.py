@@ -74,5 +74,4 @@ SCHEDULER_CONFIG = {
 DEVICE_CONFIG = {
     'use_cuda': True,
     'cuda_device': 0,
-    'use_amp': True  # 自動混合精度オプションを追加
 }
