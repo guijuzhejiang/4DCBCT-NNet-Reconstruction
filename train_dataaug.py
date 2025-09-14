@@ -572,8 +572,6 @@ class NnetTrainer:
             # 学習
             self.train_epoch(epoch)
             # 検証
-            self.validate_epoch(epoch)
-
             val_loss = self.validate_epoch(epoch)
             self.early_stopping(val_loss)
             if self.early_stopping.early_stop:
