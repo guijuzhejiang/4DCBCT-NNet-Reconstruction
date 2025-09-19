@@ -21,14 +21,14 @@ from model_Nnet import Nnet
 from train_dataset_Nnet import Nnet_Dataset
 from config import TRAINING_CONFIG, DATASET_CONFIG, MODEL_CONFIG, LOGGING_CONFIG, SCHEDULER_CONFIG, DEVICE_CONFIG
 from utils import setup_device, save_model
-from monai.losses import SSIMLoss, PerceptualLoss, MultiScaleLoss
+from monai.losses import SSIMLoss, PerceptualLoss
 from torch.nn import MSELoss, L1Loss
 from monai.utils import set_determinism
 from monai.transforms import (
-    Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityd, LambdaD, RandHistogramShiftd, RandBiasFieldd,
+    Compose, LoadImaged, EnsureChannelFirstd, LambdaD, RandHistogramShiftd, RandBiasFieldd,
     RandGaussianNoised, RandGaussianSmoothd, RandCoarseDropoutd, RandAffined, RandAdjustContrastd, ToTensord
 )
-from monai.data import Dataset, CacheDataset, ThreadDataLoader, SmartCacheDataset, PersistentDataset, LMDBDataset, DataLoader
+from monai.data import Dataset, DataLoader
 from monai.metrics import SSIMMetric, MAEMetric, PSNRMetric, RMSEMetric, MultiScaleSSIMMetric
 from datetime import datetime
 import wandb
