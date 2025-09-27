@@ -41,7 +41,6 @@ class NnetTrainer:
     """統合されたロギングとモニタリングを備えたN-netトレーナークラス。
     @param {str} experiment_dir - 実験結果を保存するディレクトリパス。
     """
-
     def __init__(self, experiment_dir):
         self.experiment_dir = experiment_dir
         self.device = setup_device(DEVICE_CONFIG['use_cuda'], DEVICE_CONFIG['cuda_device'])
@@ -114,24 +113,11 @@ class NnetTrainer:
             LoadImaged(keys=["img", "prior", "label"], reader=reader),
             EnsureChannelFirstd(keys=["img", "prior", "label"]),
             LambdaD(keys=["img", "prior", "label"], func=lambda x: (x.astype(np.float32) - 2000.0) / 3000.0),
-            # ScaleIntensityd(
-            #     keys=["img", "prior", "label"],
-            #     minv=0.0,
-            #     maxv=1.0,
-            # ),
-            # ScaleIntensityRanged(
-            #     keys=["img", "prior", "label"],
-            #     a_min=-1000,
-            #     a_max=400,
-            #     b_min=0.0,
-            #     b_max=1.0,
-            #     clip=True,
-            # ),
             # 運動アーチファクト関連の拡張
             RandAffined(
                 keys=["img", "prior", "label"],
                 mode=("bilinear", "bilinear", "bilinear"),
-                prob=1.0,
+                prob=0.5,
                 rotate_range=(0.05, 0.05),
                 translate_range=(10, 10),
                 scale_range=(0.1, 0.1),
@@ -143,17 +129,17 @@ class NnetTrainer:
                 holes=10,
                 spatial_size=(15, 15),
                 max_holes=10,
-                prob=1.0,
+                prob=0.5,
                 fill_value=-1  # 金属アーチファクトの低信号をシミュレート
             ),
             # ノイズ関連の拡張
-            RandGaussianNoised(keys=["img"], prob=1.0, mean=0.0, std=0.05),
-            RandGaussianSmoothd(keys=["img"], sigma_x=(0.5, 1.0), sigma_y=(0.5, 1.0), prob=1.0),
+            RandGaussianNoised(keys=["img"], prob=0.5, mean=0.0, std=0.05),
+            RandGaussianSmoothd(keys=["img"], sigma_x=(0.5, 1.0), sigma_y=(0.5, 1.0), prob=0.5),
             # コントラスト拡張
-            RandAdjustContrastd(keys=["img"], gamma=(0.8, 1.2), prob=1.0),
+            RandAdjustContrastd(keys=["img"], gamma=(0.8, 1.2), prob=0.5),
             # アーチファクト特定拡張の補足
-            RandBiasFieldd(keys=["img"], degree=3, coeff_range=(0.0, 0.1), prob=1.0),
-            RandHistogramShiftd(keys=["img"], num_control_points=5, prob=1.0),
+            RandBiasFieldd(keys=["img"], degree=3, coeff_range=(0.0, 0.1), prob=0.5),
+            RandHistogramShiftd(keys=["img"], num_control_points=5, prob=0.5),
             # テンソルに変換
             ToTensord(keys=["img", "prior", "label"])
         ])
@@ -161,19 +147,6 @@ class NnetTrainer:
             LoadImaged(keys=["img", "prior", "label"], reader=reader),
             EnsureChannelFirstd(keys=["img", "prior", "label"]),
             LambdaD(keys=["img", "prior", "label"], func=lambda x: (x.astype(np.float32) - 2000.0) / 3000.0),
-            # ScaleIntensityd(
-            #     keys=["img", "prior", "label"],
-            #     minv=0.0,
-            #     maxv=1.0,
-            # ),
-            # ScaleIntensityRanged(
-            #     keys=["img", "prior", "label"],
-            #     a_min=-1000,
-            #     a_max=400,
-            #     b_min=0.0,
-            #     b_max=1.0,
-            #     clip=True,
-            # ),
             ToTensord(keys=["img", "prior", "label"])
         ])
 
