@@ -573,18 +573,17 @@ class NnetTrainer:
             self.train_epoch(epoch)
             # 検証
             val_loss = self.validate_epoch(epoch)
-            self.early_stopping(val_loss)
-            if self.early_stopping.early_stop:
-                print("Early stopping triggered")
-                break
-
             # メモリを強制的に解放
             free_memory()
             # 学習率スケジューラの更新
             if self.scheduler_type == 'ReduceLROnPlateau':
-                self.scheduler.step(self.last_val_loss)
+                self.scheduler.step(val_loss)
             elif self.scheduler_type == 'StepLR':
                 self.scheduler.step()
+            self.early_stopping(val_loss)
+            if self.early_stopping.early_stop:
+                print("Early stopping triggered")
+                break
         self.cleanup()
 
     def cleanup(self):
