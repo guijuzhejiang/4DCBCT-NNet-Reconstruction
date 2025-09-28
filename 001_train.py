@@ -555,7 +555,7 @@ class NnetTrainer:
             free_memory()
             # 学習率スケジューラの更新
             if self.scheduler_type == 'ReduceLROnPlateau':
-                self.scheduler.step(self.last_val_loss)
+                self.scheduler.step(val_loss)
             elif self.scheduler_type == 'StepLR':
                 self.scheduler.step()
         self.cleanup()
