@@ -105,7 +105,6 @@ MODEL_CONFIG = {
 | `use_tensorboard`     | `bool`    | `True`                | TensorBoard を使用してロギングするかどうか。    |
 | `wandb_project`       | `str`     | `nnet-medical-ct`     | Wandb プロジェクト名。                          |
 | `wandb_entity`        | `str/None` | `None`                | Wandb エンティティまたはユーザー名（オプション）。 |
-| `tensorboard_log_dir` | `str`     | `./logs`              | TensorBoard のログファイルが保存される相対パス。 |
 
 **例:**
 
@@ -115,7 +114,6 @@ LOGGING_CONFIG = {
     'use_tensorboard': True,
     'wandb_project': 'nnet-medical-ct',
     'wandb_entity': None,
-    'tensorboard_log_dir': './logs',
 }
 ```
 

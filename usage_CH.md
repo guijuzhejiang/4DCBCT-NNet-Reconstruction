@@ -105,7 +105,6 @@ MODEL_CONFIG = {
 | `use_tensorboard`     | `bool`    | `True`            | 是否使用 TensorBoard 进行日志记录。        |
 | `wandb_project`       | `str`     | `nnet-medical-ct` | Wandb 项目的名称。                         |
 | `wandb_entity`        | `str/None` | `None`            | Wandb 实体或用户名称（可选）。             |
-| `tensorboard_log_dir` | `str`     | `./logs`          | TensorBoard 日志文件保存的相对路径。       |
 
 **示例:**
 
@@ -115,7 +114,6 @@ LOGGING_CONFIG = {
     'use_tensorboard': True,
     'wandb_project': 'nnet-medical-ct',
     'wandb_entity': None,
-    'tensorboard_log_dir': './logs',
 }
 ```
 

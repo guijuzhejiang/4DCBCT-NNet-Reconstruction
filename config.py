@@ -4,7 +4,7 @@ N-net学習設定ファイル
 
 # 学習パラメータ
 TRAINING_CONFIG = {
-    'train_batch_size': 48,
+    'train_batch_size': 1,
     'val_batch_size': 48,
     'num_workers': 1,
     'epochs': 100,
@@ -14,15 +14,14 @@ TRAINING_CONFIG = {
     'weight_ssim': 0.3,
     'weight_mse': 0.4,
     'seed': 42,
-    'early_stopping_patience': 2,
+    'early_stopping_patience': 3,
 }
 
 # データセット設定
 DATASET_CONFIG = {
-    # 'data_root': '/media/zzg/GJ_disk01/data/Medical/4D_Lung_CBCT_Hitachi/dataset',
     'data_root': '/home/zzg/data/Medical/4D_Lung_CBCT_Hitachi/dataset/',
-    'train_fov_type': 'FovL',            #"FovL", "FovS_180", "FovS_360"
-    'test_fov_type': 'FovS_360',
+    'train_fov_type': 'FovS_360',            #"FovL", "FovS_180", "FovS_360"
+    'test_fov_type': 'FovS_180',
     'train_dataset_indices': list(range(0, 40)),
     # 'train_dataset_indices': [0],
     'val_dataset_indices': list(range(40, 45)),
@@ -45,12 +44,11 @@ LOGGING_CONFIG = {
     'use_tensorboard': True,
     'wandb_project': 'nnet-medical-ct',
     'wandb_entity': None,
-    'tensorboard_log_dir': './logs',
 }
 
 # 学習率スケジューラ
 SCHEDULER_CONFIG = {
-    'type': 'CyclicLR',
+    'type': 'ReduceLROnPlateau',
     'step_size': 1,     #default 5
     'gamma': 0.90,
     'lr': 1e-4,
