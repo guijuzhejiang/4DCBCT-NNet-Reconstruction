@@ -21,7 +21,7 @@ TRAINING_CONFIG = {
 DATASET_CONFIG = {
     'data_root': '/home/zzg/data/Medical/4D_Lung_CBCT_Hitachi/dataset/',
     'train_fov_type': 'FovS_360',            #"FovL", "FovS_180", "FovS_360"
-    'test_fov_type': 'FovS_180',
+    'test_fov_type': 'FovS_360',
     'train_dataset_indices': list(range(0, 40)),
     # 'train_dataset_indices': [0],
     'val_dataset_indices': list(range(40, 45)),

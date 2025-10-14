@@ -21,9 +21,9 @@ from config import DATASET_CONFIG
 
 # --- ▼▼▼ 設定項目 ▼▼▼ ---
 # 学習済みモデルが保存されているフォルダのフルパス指定
-OUTPUT_FOLDER = '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251016_NNet_FovS180_phase_00'
+# OUTPUT_FOLDER = '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251016_NNet_FovS180_phase_00'
 # OUTPUT_FOLDER = '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251017_NNet_FovS360_phase_00'
-# OUTPUT_FOLDER = '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251018_NNet_FovL_phase_00'
+OUTPUT_FOLDER = '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251018_NNet_FovL_phase_00'
 # --- ▲▲▲ 設定項目 ▲▲▲ ---
 
 def calculate_metrics(gt_img, pred_img):

@@ -22,8 +22,6 @@ import torch
 INFER_FOLDERS = {
     'infer1_EffUnetb0': '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20250902_081500_0002_EffUnetb0_FovL_phase_00/inference_results/comparison_raw_images',
     'infer2_EffUnetb2': '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20250902_180746_0003_EffUnetb2_FovL_phase_00/inference_results/comparison_raw_images',
-    'NNet_FovS180': '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251016_NNet_FovS180_phase_00/inference_results/comparison_raw_images',
-    'NNet_FovS360': '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251017_NNet_FovS360_phase_00/inference_results/comparison_raw_images',
     'NNet_FovL': '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251018_NNet_FovL_phase_00/inference_results/comparison_raw_images',
 }
 
