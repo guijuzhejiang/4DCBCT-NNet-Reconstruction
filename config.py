@@ -4,15 +4,16 @@ N-net学習設定ファイル
 
 # 学習パラメータ
 TRAINING_CONFIG = {
-    'train_batch_size': 1,
+    'train_batch_size': 32,
     'val_batch_size': 48,
-    'num_workers': 2,
+    'num_workers': 4,
     'epochs': 100,
     'model_save_dir': './trained_model',
-    'weight_l1': 0.4,
-    'weight_percep': 0.2,
-    'weight_ssim': 0.3,
-    'weight_mse': 0.1,
+    'weight_l1': 0.3,
+    'weight_percep': 0.0,   #(若 VGG 在医学图像上效果差，可移除)
+    'weight_ssim': 0.4,
+    'weight_mse': 0.0,
+    'weight_grad': 0.3,
     'seed': 42,
     'early_stopping_patience': 3,
 }
@@ -21,7 +22,7 @@ TRAINING_CONFIG = {
 DATASET_CONFIG = {
     'data_root': '/home/zzg/data/Medical/4D_Lung_CBCT_Hitachi/dataset/',
     'train_fov_type': 'FovL',            #"FovL", "FovS_180", "FovS_360"
-    'test_fov_type': 'FovS_360',
+    'test_fov_type': 'FovL',
     'train_dataset_indices': list(range(0, 40)),
     # 'train_dataset_indices': [0],
     'val_dataset_indices': list(range(40, 45)),
@@ -30,6 +31,10 @@ DATASET_CONFIG = {
     # 'test_dataset_indices': [40],
     'image_size': (512, 512),
     'image_number': 384,
+    'ScaleIntensityRange_a_min': -160,
+    'ScaleIntensityRange_a_max': 240,
+    'ScaleIntensityRange_b_min': -1.0,
+    'ScaleIntensityRange_b_miax': 1.0,
 }
 
 # モデル設定

@@ -22,7 +22,7 @@ import torch
 INFER_FOLDERS = {
     'infer1_EffUnetb0': '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20250902_081500_0002_EffUnetb0_FovL_phase_00/inference_results/comparison_raw_images',
     'infer2_EffUnetb2': '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20250902_180746_0003_EffUnetb2_FovL_phase_00/inference_results/comparison_raw_images',
-    'NNet_FovL': '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251016_NNet_FovL_phase_00/inference_results/comparison_raw_images',
+    'NNet_FovL': '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251021_103049_FovL_neg160_240/inference_results/comparison_raw_images',
 }
 
 # 2. 評価対象の画像No.の範囲
