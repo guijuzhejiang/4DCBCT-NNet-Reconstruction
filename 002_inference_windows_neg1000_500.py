@@ -21,10 +21,7 @@ from config import DATASET_CONFIG
 
 # --- ▼▼▼ 設定項目 ▼▼▼ ---
 # 学習済みモデルが保存されているフォルダのフルパス指定
-# OUTPUT_FOLDER = '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251017_NNet_FovS180_phase_00'
-# OUTPUT_FOLDER = '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251020_NNet_FovS360_phase_00'
-# OUTPUT_FOLDER = '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251016_NNet_FovL_phase_00'
-OUTPUT_FOLDER = '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251021_103049_FovL_neg160_240/'
+OUTPUT_FOLDER = '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251024_185446'
 # --- ▲▲▲ 設定項目 ▲▲▲ ---
 
 def calculate_metrics(gt_img, pred_img):
@@ -62,11 +59,26 @@ def create_boxplot(df, metric, output_folder):
     plt.savefig(os.path.join(output_folder, f'{metric}_boxplot.png'))
     plt.close()
 
-def to_int16_raw(img_float):
+def to_int16_raw(folder_name, img_float):
     # float型配列をint16型のRAWデータに変換
-    # return (img_float * 1500.0 - 1000.0).astype(np.int16)
-    range = DATASET_CONFIG['ScaleIntensityRange_a_max'] - DATASET_CONFIG['ScaleIntensityRange_a_min']
-    return (img_float * range + DATASET_CONFIG['ScaleIntensityRange_a_min']).astype(np.int16)
+    if folder_name == "noisy":
+        a_min = DATASET_CONFIG['ScaleIntensityRange_img_a_min']
+        a_max = DATASET_CONFIG['ScaleIntensityRange_img_a_max']
+    elif folder_name == "prior":
+        a_min = DATASET_CONFIG['ScaleIntensityRange_prior_a_min']
+        a_max = DATASET_CONFIG['ScaleIntensityRange_prior_a_max']
+    elif folder_name in ["restored", "gt"]:
+        a_min = DATASET_CONFIG['ScaleIntensityRange_GT_a_min']
+        a_max = DATASET_CONFIG['ScaleIntensityRange_GT_a_max']
+    b_min = DATASET_CONFIG['ScaleIntensityRange_b_min']
+    b_max = DATASET_CONFIG['ScaleIntensityRange_b_max']
+
+    if b_max == b_min:
+        raise ValueError("b_max と b_min は等しいので、逆線形変換は不可能です。")
+
+    hu = ((img_float - b_min) / (b_max - b_min)) * (a_max - a_min) + a_min
+
+    return hu.astype(np.int16)
 
 def inference_and_evaluate():
     # --- 1. 初期設定とパス確認 ---
@@ -158,7 +170,7 @@ def inference_and_evaluate():
             for folder_name, image_data in folders.items():
                 save_dir = os.path.join(subject_raw_base, folder_name)
                 os.makedirs(save_dir, exist_ok=True)
-                raw_data = to_int16_raw(image_data)
+                raw_data = to_int16_raw(folder_name, image_data)
                 raw_data.tofile(os.path.join(save_dir, raw_filename))
             
     # --- 6. 評価結果の集計と保存 ---

@@ -113,12 +113,36 @@ class NnetTrainer:
         train_transforms = Compose([
             LoadImaged(keys=["img", "prior", "label"], reader=reader),
             EnsureChannelFirstd(keys=["img", "prior", "label"]),
+            # ScaleIntensityRanged(
+            #     keys=["img", "prior", "label"],
+            #     a_min=DATASET_CONFIG['ScaleIntensityRange_a_min'],
+            #     a_max=DATASET_CONFIG['ScaleIntensityRange_a_max'],
+            #     b_min=DATASET_CONFIG['ScaleIntensityRange_b_min'],
+            #     b_max=DATASET_CONFIG['ScaleIntensityRange_b_max'],
+            #     clip=True,
+            # ),
             ScaleIntensityRanged(
-                keys=["img", "prior", "label"],
-                a_min=DATASET_CONFIG['ScaleIntensityRange_a_min'],
-                a_max=DATASET_CONFIG['ScaleIntensityRange_a_max'],
+                keys=["img"],
+                a_min=DATASET_CONFIG['ScaleIntensityRange_img_a_min'],
+                a_max=DATASET_CONFIG['ScaleIntensityRange_img_a_max'],
                 b_min=DATASET_CONFIG['ScaleIntensityRange_b_min'],
-                b_max=DATASET_CONFIG['ScaleIntensityRange_b_miax'],
+                b_max=DATASET_CONFIG['ScaleIntensityRange_b_max'],
+                clip=True,
+            ),
+            ScaleIntensityRanged(
+                keys=["prior"],
+                a_min=DATASET_CONFIG['ScaleIntensityRange_prior_a_min'],
+                a_max=DATASET_CONFIG['ScaleIntensityRange_prior_a_max'],
+                b_min=DATASET_CONFIG['ScaleIntensityRange_b_min'],
+                b_max=DATASET_CONFIG['ScaleIntensityRange_b_max'],
+                clip=True,
+            ),
+            ScaleIntensityRanged(
+                keys=["label"],
+                a_min=DATASET_CONFIG['ScaleIntensityRange_GT_a_min'],
+                a_max=DATASET_CONFIG['ScaleIntensityRange_GT_a_max'],
+                b_min=DATASET_CONFIG['ScaleIntensityRange_b_min'],
+                b_max=DATASET_CONFIG['ScaleIntensityRange_b_max'],
                 clip=True,
             ),
             # 運動アーチファクト関連の拡張
@@ -140,12 +164,12 @@ class NnetTrainer:
             #     prob=0.5,
             #     fill_value=-1  # 金属アーチファクトの低信号をシミュレート
             # ),
-            # ノイズ関連の拡張
-            # RandGaussianNoised(keys=["img"], prob=0.5, mean=0.0, std=0.05),
+            # # ノイズ関連の拡張
+            RandGaussianNoised(keys=["img"], prob=0.5, mean=0.0, std=0.1),
             # RandGaussianSmoothd(keys=["img"], sigma_x=(0.5, 1.0), sigma_y=(0.5, 1.0), prob=0.5),
-            # コントラスト拡張
+            # # コントラスト拡張
             # RandAdjustContrastd(keys=["img"], gamma=(0.8, 1.2), prob=0.5),
-            # アーチファクト特定拡張の補足
+            # # アーチファクト特定拡張の補足
             # RandBiasFieldd(keys=["img"], degree=3, coeff_range=(0.0, 0.1), prob=0.5),
             # RandHistogramShiftd(keys=["img"], num_control_points=5, prob=0.5),
             # テンソルに変換
@@ -154,12 +178,36 @@ class NnetTrainer:
         val_transforms = Compose([
             LoadImaged(keys=["img", "prior", "label"], reader=reader),
             EnsureChannelFirstd(keys=["img", "prior", "label"]),
+            # ScaleIntensityRanged(
+            #     keys=["img", "prior", "label"],
+            #     a_min=DATASET_CONFIG['ScaleIntensityRange_a_min'],
+            #     a_max=DATASET_CONFIG['ScaleIntensityRange_a_max'],
+            #     b_min=DATASET_CONFIG['ScaleIntensityRange_b_min'],
+            #     b_max=DATASET_CONFIG['ScaleIntensityRange_b_max'],
+            #     clip=True,
+            # ),
             ScaleIntensityRanged(
-                keys=["img", "prior", "label"],
-                a_min=DATASET_CONFIG['ScaleIntensityRange_a_min'],
-                a_max=DATASET_CONFIG['ScaleIntensityRange_a_max'],
+                keys=["img"],
+                a_min=DATASET_CONFIG['ScaleIntensityRange_img_a_min'],
+                a_max=DATASET_CONFIG['ScaleIntensityRange_img_a_max'],
                 b_min=DATASET_CONFIG['ScaleIntensityRange_b_min'],
-                b_max=DATASET_CONFIG['ScaleIntensityRange_b_miax'],
+                b_max=DATASET_CONFIG['ScaleIntensityRange_b_max'],
+                clip=True,
+            ),
+            ScaleIntensityRanged(
+                keys=["prior"],
+                a_min=DATASET_CONFIG['ScaleIntensityRange_prior_a_min'],
+                a_max=DATASET_CONFIG['ScaleIntensityRange_prior_a_max'],
+                b_min=DATASET_CONFIG['ScaleIntensityRange_b_min'],
+                b_max=DATASET_CONFIG['ScaleIntensityRange_b_max'],
+                clip=True,
+            ),
+            ScaleIntensityRanged(
+                keys=["label"],
+                a_min=DATASET_CONFIG['ScaleIntensityRange_GT_a_min'],
+                a_max=DATASET_CONFIG['ScaleIntensityRange_GT_a_max'],
+                b_min=DATASET_CONFIG['ScaleIntensityRange_b_min'],
+                b_max=DATASET_CONFIG['ScaleIntensityRange_b_max'],
                 clip=True,
             ),
             ToTensord(keys=["img", "prior", "label"])

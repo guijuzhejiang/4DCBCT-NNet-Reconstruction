@@ -4,14 +4,14 @@ N-net学習設定ファイル
 
 # 学習パラメータ
 TRAINING_CONFIG = {
-    'train_batch_size': 32,
+    'train_batch_size': 1,
     'val_batch_size': 48,
-    'num_workers': 4,
+    'num_workers': 2,
     'epochs': 100,
     'model_save_dir': './trained_model',
-    'weight_l1': 0.3,
-    'weight_percep': 0.0,   #(若 VGG 在医学图像上效果差，可移除)
-    'weight_ssim': 0.4,
+    'weight_l1': 0.2,
+    'weight_percep': 0.2,
+    'weight_ssim': 0.3,
     'weight_mse': 0.0,
     'weight_grad': 0.3,
     'seed': 42,
@@ -31,10 +31,20 @@ DATASET_CONFIG = {
     # 'test_dataset_indices': [40],
     'image_size': (512, 512),
     'image_number': 384,
-    'ScaleIntensityRange_a_min': -160,
-    'ScaleIntensityRange_a_max': 240,
-    'ScaleIntensityRange_b_min': -1.0,
-    'ScaleIntensityRange_b_miax': 1.0,
+    # 'ScaleIntensityRange_a_min': -160,
+    # 'ScaleIntensityRange_a_max': 240,   #120
+    'ScaleIntensityRange_img_a_min': -500,
+    'ScaleIntensityRange_img_a_max': 800,
+    'ScaleIntensityRange_prior_a_min': -700,
+    'ScaleIntensityRange_prior_a_max': 500,
+    'ScaleIntensityRange_GT_a_min': -160,
+    'ScaleIntensityRange_GT_a_max': 240,
+    'ScaleIntensityRange_b_min': 0.0,
+    'ScaleIntensityRange_b_max': 1.0,
+    # 'ScaleIntensityRange_a_min': -1000,
+    # 'ScaleIntensityRange_a_max': 500,
+    # 'ScaleIntensityRange_b_min': -5.0,
+    # 'ScaleIntensityRange_b_max': 5.0,
 }
 
 # モデル設定
