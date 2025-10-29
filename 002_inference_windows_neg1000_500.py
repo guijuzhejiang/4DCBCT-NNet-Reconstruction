@@ -21,7 +21,7 @@ from config import DATASET_CONFIG
 
 # --- ▼▼▼ 設定項目 ▼▼▼ ---
 # 学習済みモデルが保存されているフォルダのフルパス指定
-OUTPUT_FOLDER = '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251024_185446'
+OUTPUT_FOLDER = '/home/zzg/data/Medical/20250903_Hitachi_SampleCode/output/20251028_224455'
 # --- ▲▲▲ 設定項目 ▲▲▲ ---
 
 def calculate_metrics(gt_img, pred_img):
