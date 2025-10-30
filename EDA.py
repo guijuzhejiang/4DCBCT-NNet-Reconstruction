@@ -3,6 +3,7 @@ import glob
 import numpy as np
 import matplotlib.pyplot as plt
 import imageio
+import seaborn as sns
 from config import DATASET_CONFIG
 
 
@@ -65,6 +66,184 @@ def find_common_subjects_and_slices(data_root, fovs):
     return common_data
 
 
+def analyze_hu_distribution(data_root, output_dir, fovs=["FovL", "FovS_180", "FovS_360"]):
+    """
+    各画像タイプのHU値分布を分析し、可視化する
+    @param {str} data_root - データルートディレクトリ
+    @param {str} output_dir - 出力ディレクトリ
+    @param {list} fovs - 視野（FOV）のリスト
+    """
+    print("HU値分布分析を実行中...")
+    
+    img_types = ["img", "prior", "gt"]
+    hu_data = {img_type: {fov: [] for fov in fovs} for img_type in img_types}
+    
+    # データ収集
+    for fov in fovs:
+        fov_path = os.path.join(data_root, fov)
+        if not os.path.exists(fov_path):
+            print(f"FOVパスが存在しません: {fov_path}")
+            continue
+            
+        subjects = [d for d in os.listdir(fov_path) 
+                   if os.path.isdir(os.path.join(fov_path, d)) and d.startswith("subject_")]
+        
+        # 最初の3つの被験者からサンプル収集（計算量を制限）
+        for subject in subjects[:3]:
+            subject_path = os.path.join(fov_path, subject)
+            
+            # prior画像の処理
+            prior_path = os.path.join(subject_path, "prior")
+            if os.path.exists(prior_path):
+                img_files = sorted(glob.glob(os.path.join(prior_path, "*.img")))[:10]  # 最初の10枚
+                for img_file in img_files:
+                    img = load_ct_slice(img_file)
+                    if img is not None:
+                        # 全データを使用
+                        hu_data["prior"][fov].extend(img.flatten())
+            
+            # img と gt の処理（phase_00 のみ）
+            phase_path = os.path.join(subject_path, "phase_00")
+            for img_type in ["img", "gt"]:
+                img_path = os.path.join(phase_path, img_type)
+                if os.path.exists(img_path):
+                    img_files = sorted(glob.glob(os.path.join(img_path, "*.img")))[:10]  # 最初の10枚
+                    for img_file in img_files:
+                        img = load_ct_slice(img_file)
+                        if img is not None:
+                            # 全データを使用
+                            hu_data[img_type][fov].extend(img.flatten())
+    
+    # 統計情報の計算と表示
+    print("\n=== HU値分布統計 ===")
+    stats_data = []
+    
+    for img_type in img_types:
+        for fov in fovs:
+            if hu_data[img_type][fov]:
+                values = np.array(hu_data[img_type][fov])
+                stats = {
+                    'Image_Type': img_type,
+                    'FOV': fov,
+                    'Count': len(values),
+                    'Mean': np.mean(values),
+                    'Std': np.std(values),
+                    'Min': np.min(values),
+                    'Max': np.max(values),
+                    'Q25': np.percentile(values, 25),
+                    'Q50': np.percentile(values, 50),
+                    'Q75': np.percentile(values, 75)
+                }
+                stats_data.append(stats)
+                print(f"{img_type} - {fov}: Mean={stats['Mean']:.1f}, Std={stats['Std']:.1f}, "
+                      f"Range=[{stats['Min']:.0f}, {stats['Max']:.0f}]")
+    
+    # 1. ヒストグラム比較（3x3グリッド：img_types × fovs）
+    fig, axes = plt.subplots(3, 3, figsize=(18, 15))
+    fig.suptitle('HU Value Distribution by Image Type and FOV', fontsize=16)
+    
+    colors = ['blue', 'orange', 'green', 'red', 'purple', 'brown', 'pink', 'gray', 'cyan']
+    
+    for i, img_type in enumerate(img_types):
+        for j, fov in enumerate(fovs):
+            ax = axes[i, j]
+            if hu_data[img_type][fov]:
+                values = np.array(hu_data[img_type][fov])
+                # 全データ範囲でヒストグラムを表示
+                ax.hist(values, bins=100, alpha=0.8, color=colors[i*3+j], density=True)
+                
+                # 統計情報を表示
+                mean_val = np.mean(values)
+                std_val = np.std(values)
+                ax.axvline(mean_val, color='red', linestyle='--', alpha=0.8, label=f'Mean: {mean_val:.1f}')
+                
+                ax.set_title(f'{img_type.upper()} - {fov}', fontsize=12)
+                ax.set_xlabel('HU Value')
+                ax.set_ylabel('Density')
+                ax.legend(fontsize=8)
+                ax.grid(True, alpha=0.3)
+            else:
+                ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
+                ax.set_title(f'{img_type.upper()} - {fov}', fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "hu_distribution_by_type.png"), dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    # 2. ボックスプロット比較
+    plt.figure(figsize=(15, 8))
+    
+    # データを準備
+    plot_data = []
+    for img_type in img_types:
+        for fov in fovs:
+            if hu_data[img_type][fov]:
+                values = np.array(hu_data[img_type][fov])
+                # 全データを使用（抽样を削除）
+                for val in values:
+                    plot_data.append({
+                        'HU_Value': val,
+                        'Image_Type': img_type,
+                        'FOV': fov,
+                        'Type_FOV': f"{img_type}_{fov}"
+                    })
+    
+    if plot_data:
+        import pandas as pd
+        df = pd.DataFrame(plot_data)
+        
+        plt.subplot(2, 1, 1)
+        sns.boxplot(data=df, x='Image_Type', y='HU_Value', hue='FOV')
+        plt.title('HU Value Distribution by Image Type and FOV')
+        plt.ylabel('HU Value')
+        
+        plt.subplot(2, 1, 2)
+        sns.violinplot(data=df, x='Image_Type', y='HU_Value', hue='FOV')
+        plt.title('HU Value Distribution (Violin Plot)')
+        plt.ylabel('HU Value')
+        
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "hu_distribution_boxplot.png"), dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    # 3. 統計サマリーテーブルの保存
+    if stats_data:
+        import pandas as pd
+        stats_df = pd.DataFrame(stats_data)
+        
+        # テーブルの可視化
+        fig, ax = plt.subplots(figsize=(14, 8))
+        ax.axis('tight')
+        ax.axis('off')
+        
+        # 数値を小数点1桁に丸める
+        display_df = stats_df.copy()
+        numeric_cols = ['Mean', 'Std', 'Min', 'Max', 'Q25', 'Q50', 'Q75']
+        for col in numeric_cols:
+            display_df[col] = display_df[col].round(1)
+        
+        table = ax.table(cellText=display_df.values, colLabels=display_df.columns,
+                        cellLoc='center', loc='center')
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1.2, 1.5)
+        
+        # ヘッダーのスタイル設定
+        for i in range(len(display_df.columns)):
+            table[(0, i)].set_facecolor('#40466e')
+            table[(0, i)].set_text_props(weight='bold', color='white')
+        
+        plt.title('HU Value Distribution Statistics Summary', fontsize=16, pad=20)
+        plt.savefig(os.path.join(output_dir, "hu_distribution_stats_table.png"), 
+                   dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        # CSVファイルとして保存
+        stats_df.to_csv(os.path.join(output_dir, "hu_distribution_stats.csv"), index=False)
+    
+    print(f"HU値分布分析完了。結果は {output_dir} に保存されました。")
+
+
 def visualize_slice_depth_progression(data_root, output_dir, fovs=["FovL", "FovS_180", "FovS_360"]):
     """
     スライス深度進行の可視化
@@ -109,7 +288,7 @@ def visualize_slice_depth_progression(data_root, output_dir, fovs=["FovL", "FovS
                 if slice_idx < len(img_files):
                     img = load_ct_slice(img_files[slice_idx])
                     if img is not None:
-                        ax.imshow(img, cmap='gray', vmin=-1000, vmax=1000)
+                        ax.imshow(img, cmap='gray')
                         if i == 0:
                             ax.set_title(f"Slice {slice_idx}")
                     else:
@@ -180,7 +359,7 @@ def visualize_subject_comparison(data_root, output_dir, fovs=["FovL", "FovS_180"
             if slice_idx < len(img_files):
                 img = load_ct_slice(img_files[slice_idx])
                 if img is not None:
-                    ax.imshow(img, cmap='gray', vmin=-1000, vmax=1000)
+                    ax.imshow(img, cmap='gray')
                     ax.set_title(f"{subject}")
                 else:
                     ax.text(0.5, 0.5, "読み込み失敗", ha='center', va='center', transform=ax.transAxes)
@@ -264,12 +443,8 @@ def visualize_image_type_comparison(data_root, output_dir, fovs=["FovL", "FovS_1
                     img = load_ct_slice(img_files[slice_idx])
                     if img is not None:
                         # 画像タイプに基づいて表示パラメータを調整
-                        if img_type == "prior":
-                            vmin, vmax = -1000, 1000
-                        else:
-                            vmin, vmax = -1000, 1000
-
-                        ax.imshow(img, cmap='gray', vmin=vmin, vmax=vmax)
+                        # すべてのデータ範囲を表示
+                        ax.imshow(img, cmap='gray')
                         if i == 0:
                             ax.set_title(f"{img_type}")
                     else:
@@ -334,9 +509,13 @@ def create_respiratory_motion_gifs(data_root, output_dir, fovs=["FovL", "FovS_18
                 if slice_idx < len(img_files):
                     img = load_ct_slice(img_files[slice_idx])
                     if img is not None:
-                        # 0-255の範囲に正規化
-                        normalized = np.clip((img + 1000) / 2000 * 255, 0, 255)
-                        images.append(normalized.astype(np.uint8))
+                        # 動的範囲に基づいて正規化
+                        img_min, img_max = img.min(), img.max()
+                        if img_max > img_min:
+                            normalized = ((img - img_min) / (img_max - img_min) * 255).astype(np.uint8)
+                        else:
+                            normalized = np.zeros_like(img, dtype=np.uint8)
+                        images.append(normalized)
 
         if len(images) >= 5:
             # ループを形成するために逆再生を追加
@@ -410,7 +589,7 @@ def visualize_phase_with_prior_matrix(data_root, output_dir, fovs=["FovL", "FovS
                 if slice_idx < len(img_files):
                     img = load_ct_slice(img_files[slice_idx])
                     if img is not None:
-                        ax.imshow(img, cmap='gray', vmin=-1000, vmax=1000)
+                        ax.imshow(img, cmap='gray')
                         if i == 0:  # 最初の行にのみ列タイトルを表示
                             ax.set_title(f"{col_item}")
                     else:
@@ -445,20 +624,23 @@ def generate_enhanced_visualizations(data_root, output_dir):
     fovs = ["FovL", "FovS_180", "FovS_360"]
 
     try:
+        # 0. HU値分布分析（新規追加）
+        analyze_hu_distribution(data_root, output_dir, fovs)
+
         # 1. スライス深度進行
-        visualize_slice_depth_progression(data_root, output_dir, fovs)
-
-        # 2. 被験者比較
-        visualize_subject_comparison(data_root, output_dir, fovs)
-
-        # 3. 画像タイプ比較
-        visualize_image_type_comparison(data_root, output_dir, fovs)
-
-        # 4. 呼吸フェーズと先行画像比較行列
-        visualize_phase_with_prior_matrix(data_root, output_dir, fovs)
-
-        # 5. 呼吸運動GIFを作成
-        create_respiratory_motion_gifs(data_root, output_dir, fovs)
+        # visualize_slice_depth_progression(data_root, output_dir, fovs)
+        #
+        # # 2. 被験者比較
+        # visualize_subject_comparison(data_root, output_dir, fovs)
+        #
+        # # 3. 画像タイプ比較
+        # visualize_image_type_comparison(data_root, output_dir, fovs)
+        #
+        # # 4. 呼吸フェーズと先行画像比較行列
+        # visualize_phase_with_prior_matrix(data_root, output_dir, fovs)
+        #
+        # # 5. 呼吸運動GIFを作成
+        # create_respiratory_motion_gifs(data_root, output_dir, fovs)
 
         print(f"すべての強化された可視化グラフは次の場所に保存されました: {output_dir}")
 
